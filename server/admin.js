@@ -33,7 +33,7 @@ function mapa(x) {
   };
 }
 
-/* Resumen del panel */
+/* ---------- Resumen del panel ---------- */
 r.get('/admin/resumen', h(async (req, res) => {
   const admin = req.usuario.tipo === 'admin';
   const [pend, rep, err, cam] = await Promise.all([
@@ -50,7 +50,7 @@ r.post('/admin/errores-notificacion/revisados', soloAdmin, h(async (req, res) =>
   res.json({ ok: true });
 }));
 
-/* RF-25: verificar refugios (con la búsqueda de Maps lista para revisar) */
+/* ---------- RF-25: verificar refugios (con la búsqueda de Maps lista para revisar) ---------- */
 r.get('/admin/refugios-pendientes', soloAdmin, h(async (req, res) => {
   const lista = await q(
     `SELECT u.id, u.nombre, u.correo, u.creado, u.aviso_version, u.aviso_fecha, rf.institucion, rf.direccion, rf.telefono,
@@ -89,7 +89,7 @@ async function decidirRefugio(req, aceptar) {
 r.post('/admin/refugios/:id/aceptar', soloAdmin, h(async (req, res) => { await decidirRefugio(req, true); res.json({ mensaje: 'Cuenta verificada.' }); }));
 r.post('/admin/refugios/:id/rechazar', soloAdmin, h(async (req, res) => { await decidirRefugio(req, false); res.json({ mensaje: 'Cuenta rechazada.' }); }));
 
-/* Refugios: tabla con sus datos e indicadores */
+/* ---------- Refugios: tabla con sus datos e indicadores ---------- */
 r.get('/admin/refugios', soloAdmin, h(async (req, res) => {
   const where = ["u.tipo = 'refugio'", 'u.purgado = 0'];
   const params = [];
@@ -131,7 +131,7 @@ r.get('/admin/refugios/:id', soloAdmin, h(async (req, res) => {
   res.json(x);
 }));
 
-/*  Cambios de datos de refugios esperando aprobación  */
+/* ---------- Cambios de datos de refugios esperando aprobación ---------- */
 r.get('/admin/refugio-cambios', soloAdmin, h(async (req, res) => {
   const lista = await q(
     `SELECT rc.id, rc.refugio_id, rc.datos, rc.anteriores, LEFT(rc.creado_en, 16) AS creado, u.nombre, u.correo, rf.institucion, rf.direccion,
@@ -154,7 +154,7 @@ r.post('/admin/refugio-cambios/:id/rechazar', soloAdmin, h(async (req, res) => {
   res.json({ mensaje: 'Cambio rechazado. Se avisó al refugio.' });
 }));
 
-/*  RF-26 / RF-27: publicaciones  */
+/* ---------- RF-26 / RF-27: publicaciones ---------- */
 r.get('/admin/publicaciones', soloAdmin, h(async (req, res) => {
   const p = V.pagina(req.query.pagina);
   const total = await uno('SELECT COUNT(*) AS n FROM animales WHERE eliminado = 0');
@@ -186,7 +186,7 @@ r.post('/admin/publicaciones/:id/eliminar', soloAdmin, h(async (req, res) => {
   res.json({ mensaje: 'Publicación eliminada.' });
 }));
 
-/*  RF-28 / RF-32: cuentas  */
+/* ---------- RF-28 / RF-32: cuentas ---------- */
 r.get('/admin/cuentas', soloAdmin, h(async (req, res) => {
   const p = V.pagina(req.query.pagina);
   const where = ['purgado = 0'];
@@ -240,7 +240,7 @@ r.post('/admin/cuentas/:id/quitar-funcionario', soloAdmin, h(async (req, res) =>
   res.json({ mensaje: 'La cuenta volvió a ser de Adoptante.' });
 }));
 
-/*  RF-29 a RF-31: catálogos  */
+/* ---------- RF-29 a RF-31: catálogos ---------- */
 const EDITABLES = ['tamano', 'edad', 'tipo_requisito', 'vacuna', 'documento'];
 const nombreValor = (v) => {
   const n = limpiar(v).replace(/\s+/g, ' ');
@@ -285,7 +285,7 @@ r.post('/admin/catalogos/:id/activar', soloAdmin, h(async (req, res) => {
   res.json({ mensaje: 'Valor activado.' });
 }));
 
-/*  RF-34: reportes (Administrador y Funcionarios)  */
+/* ---------- RF-34: reportes (Administrador y Funcionarios) ---------- */
 r.get('/admin/reportes', h(async (req, res) => {
   const p = V.pagina(req.query.pagina);
   const estado = ['abierto', 'resuelto', 'descartado'].includes(req.query.estado) ? req.query.estado : 'abierto';
@@ -315,7 +315,7 @@ async function cerrarReporte(req, estado) {
 r.post('/admin/reportes/:id/resolver', h(async (req, res) => { await cerrarReporte(req, 'resuelto'); res.json({ mensaje: 'Reporte resuelto.' }); }));
 r.post('/admin/reportes/:id/descartar', h(async (req, res) => { await cerrarReporte(req, 'descartado'); res.json({ mensaje: 'Reporte descartado.' }); }));
 
-/*  RF-36 / RF-37: estadísticas generales (Administrador y Funcionarios) 
+/* ---------- RF-36 / RF-37: estadísticas generales (Administrador y Funcionarios) ----------
    animales_publicados usa la fecha de ingreso, igual que RF-35, para que las cifras coincidan (CA1). */
 async function generales(query) {
   const p = periodo(query);

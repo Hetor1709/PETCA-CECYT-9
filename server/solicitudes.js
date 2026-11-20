@@ -20,7 +20,7 @@ const r = express.Router();
 const soloAdoptante = requiere('adoptante', 'refugio');
 const soloRefugio = requiere('refugio');
 
-/*  Formato de adopción  */
+/* ---------- Formato de adopción ---------- */
 const OPCIONES = {
   vivienda: { casa: 'Casa', departamento: 'Departamento', otro: 'Otro' },
   tenencia: { propia: 'Propia', rentada: 'Rentada', familiar: 'De un familiar' },
@@ -73,7 +73,7 @@ function resumenCuestionario(c) {
 
 r.get('/solicitudes/formato', (req, res) => res.json({ opciones: OPCIONES, compromisos: COMPROMISOS }));
 
-/*  RF-16: solicitar adopción  */
+/* ---------- RF-16: solicitar adopción ---------- */
 r.post('/solicitudes', soloAdoptante, h(async (req, res) => {
   const b = req.body || {};
   const animalId = V.id(b.animal_id);
@@ -138,7 +138,7 @@ async function adjuntar(lista, yoId) {
 const puedeEscribir = (s) => (s.estado === 'pendiente' || s.estado === 'aprobada')
   && (!s.concretada_en || String(s.concretada_en) >= sumarDias(hoy(), -90));
 
-/*  RF-17: mis solicitudes (incluye lo que envié aunque el refugio no haya respondido)  */
+/* ---------- RF-17: mis solicitudes (incluye lo que envié aunque el refugio no haya respondido) ---------- */
 r.get('/solicitudes/mias', soloAdoptante, h(async (req, res) => {
   const lista = await q(
     `SELECT s.id, s.estado, LEFT(s.enviada_en, 16) AS enviada, s.motivo_rechazo, s.cuestionario, s.concretada_en, s.visita, s.visita_en, s.entrega,
@@ -157,7 +157,7 @@ r.get('/solicitudes/mias', soloAdoptante, h(async (req, res) => {
   res.json(await adjuntar(lista, req.usuario.id));
 }));
 
-/*  RF-18: solicitudes recibidas (el correo solo lo ve el Refugio de la solicitud, RNF-03)  */
+/* ---------- RF-18: solicitudes recibidas (el correo solo lo ve el Refugio de la solicitud, RNF-03) ---------- */
 const VISTAS = {
   pendiente: "s.estado = 'pendiente'",
   aprobada: "s.estado = 'aprobada' AND s.concretada_en IS NULL",
@@ -197,7 +197,7 @@ async function solicitudPropia(req, c) {
   return s;
 }
 
-/*  Conversación corta adoptante ↔ refugio  */
+/* ---------- Conversación corta adoptante ↔ refugio ---------- */
 async function solicitudDeAmbos(req, c) {
   const s = await uno(
     `SELECT s.id, s.estado, s.concretada_en, s.adoptante_id, a.refugio_id, a.nombre AS animal
@@ -233,7 +233,7 @@ r.post('/solicitudes/:id/mensajes', requiere('adoptante', 'refugio'), h(async (r
   res.status(201).json({ mensaje: 'Mensaje enviado.' });
 }));
 
-/*  RF-19: aprobar (pasa a cita y visita)  */
+/* ---------- RF-19: aprobar (pasa a cita y visita) ---------- */
 r.post('/refugio/solicitudes/:id/aprobar', soloRefugio, h(async (req, res) => {
   await tx(async (c) => {
     const s = await solicitudPropia(req, c);
@@ -248,7 +248,7 @@ r.post('/refugio/solicitudes/:id/aprobar', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: 'Solicitud aprobada. Agenda la cita y registra la visita domiciliaria.' });
 }));
 
-/*  RF-20: rechazar  */
+/* ---------- RF-20: rechazar ---------- */
 r.post('/refugio/solicitudes/:id/rechazar', soloRefugio, h(async (req, res) => {
   const m = limpiar(req.body && req.body.motivo);
   if (!m) falla('Debe ingresar el motivo del rechazo.');
@@ -265,7 +265,7 @@ r.post('/refugio/solicitudes/:id/rechazar', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: 'Solicitud rechazada.' });
 }));
 
-/*  El adoptante puede retirar su solicitud  */
+/* ---------- El adoptante puede retirar su solicitud ---------- */
 r.post('/solicitudes/:id/cancelar', soloAdoptante, h(async (req, res) => {
   await tx(async (c) => {
     const s = await uno(
@@ -280,7 +280,7 @@ r.post('/solicitudes/:id/cancelar', soloAdoptante, h(async (req, res) => {
   res.json({ mensaje: 'Solicitud cancelada.' });
 }));
 
-/*  RF-21: agendar cita  */
+/* ---------- RF-21: agendar cita ---------- */
 r.post('/refugio/solicitudes/:id/cita', soloRefugio, h(async (req, res) => {
   const { fecha, hora } = req.body || {};
   await tx(async (c) => {
@@ -306,7 +306,7 @@ r.post('/refugio/solicitudes/:id/cita', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: 'Cita agendada.' });
 }));
 
-/*  Visita domiciliaria: realizada, no requerida o el hogar no es apto (rechaza)  */
+/* ---------- Visita domiciliaria: realizada, no requerida o el hogar no es apto (rechaza) ---------- */
 r.put('/refugio/solicitudes/:id/visita', soloRefugio, h(async (req, res) => {
   const b = req.body || {};
   if (!['realizada', 'no_requerida', 'no_apta'].includes(b.resultado)) falla('Seleccione el resultado de la visita domiciliaria.');
@@ -330,7 +330,7 @@ r.put('/refugio/solicitudes/:id/visita', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: motivo ? 'Visita registrada: la solicitud se rechazó.' : 'Visita domiciliaria registrada.' });
 }));
 
-/*  RF-22 + RF-23: entrega (adopción) y cierre de las demás solicitudes  */
+/* ---------- RF-22 + RF-23: entrega (adopción) y cierre de las demás solicitudes ---------- */
 r.post('/refugio/solicitudes/:id/adopcion', soloRefugio, h(async (req, res) => {
   const b = req.body || {};
   const cerradas = await tx(async (c) => {
@@ -340,7 +340,7 @@ r.post('/refugio/solicitudes/:id/adopcion', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: `Adopción registrada. Se programó el seguimiento (1 semana, 1 mes y 3 meses). Solicitudes pendientes cerradas: ${cerradas}.` });
 }));
 
-/*  Seguimiento posterior a la adopción  */
+/* ---------- Seguimiento posterior a la adopción ---------- */
 r.put('/refugio/seguimientos/:id', soloRefugio, h(async (req, res) => {
   const b = req.body || {};
   if (!['bien', 'con_dudas', 'problema', 'sin_contacto'].includes(b.resultado)) falla('Seleccione cómo está el perro.');
@@ -370,7 +370,7 @@ r.post('/refugio/animales/:id/cerrar-solicitudes', soloRefugio, h(async (req, re
   res.json({ mensaje: `Solicitudes cerradas: ${n}.` });
 }));
 
-/*  RF-33: reportes 
+/* ---------- RF-33: reportes ----------
    Adoptantes reportan fichas de perros y refugios; los refugios reportan a adoptantes con quienes tuvieron una solicitud. */
 const MOTIVOS = {
   animal: ['Animal no doméstico', 'Contenido inapropiado', 'Información falsa', 'Otro'],

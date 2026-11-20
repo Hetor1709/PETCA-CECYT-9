@@ -9,7 +9,7 @@ const RAZAS_LISTA = require('./razas.json');
 const CPS = require('./cp_cdmx.json');
 const RAZAS = new Set(RAZAS_LISTA.map((r) => r.id));
 
-/*  Errores con mensaje para el usuario  */
+/* ---------- Errores con mensaje para el usuario ---------- */
 class ErrorApp extends Error {
   constructor(status, mensaje, extra) {
     super(mensaje);
@@ -22,7 +22,7 @@ const falla = (mensaje, status = 400, extra) => { throw new ErrorApp(status, men
 /* Envuelve rutas async para que los errores lleguen al manejador central */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-/*  Fechas (zona America/Mexico_City)  */
+/* ---------- Fechas (zona America/Mexico_City) ---------- */
 const ZONA = 'America/Mexico_City';
 const partes = (d = new Date()) => {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -46,7 +46,7 @@ const esFecha = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && new Date(`${v}T12:00:00Z`).toISOString().slice(0, 10) === v;
 const esHora = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
-/*  Texto  */
+/* ---------- Texto ---------- */
 /* Quita caracteres de control y los símbolos < > que se usan para inyectar HTML */
 const limpiar = (v) => (typeof v === 'string' ? v : '')
   .normalize('NFC')
@@ -56,7 +56,7 @@ const limpiar = (v) => (typeof v === 'string' ? v : '')
 const largo = (v) => [...v].length;
 const entre = (v, min, max) => largo(v) >= min && largo(v) <= max;
 
-/*  Reglas de coherencia  */
+/* ---------- Reglas de coherencia ---------- */
 const FECHA_MIN = '2000-01-01';
 const tieneLetras = (t, n = 2) => (String(t).match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g) || []).length >= n;
 
@@ -102,7 +102,7 @@ function nacimientoMinimo(edadNombre, base) {
   return d.toISOString().slice(0, 10);
 }
 
-/*  Nombres (personas, perros y refugios) 
+/* ---------- Nombres (personas, perros y refugios) ----------
    Reglas comunes: sin la misma letra 3 veces seguidas, con al menos una vocal, sin groserías
    y, para perros, sin nombres genéricos o de prueba. El navegador aplica las mismas reglas (app.js). */
 const sinAcentos = (t) => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -123,7 +123,7 @@ function problemaNombre(n, tipo) {
   return null;
 }
 
-/*  Dimensiones (peso y altura a la cruz): reglas compartidas en public/reglas.js  */
+/* ---------- Dimensiones (peso y altura a la cruz): reglas compartidas en public/reglas.js ---------- */
 const Reglas = require('../public/reglas.js');
 const RAZAS_DIMS = Object.fromEntries(RAZAS_LISTA.map((r) => [r.id, r]));
 const DIMS_TAMANO = Reglas.DIMS_TAMANO;
@@ -298,7 +298,7 @@ const V = {
   },
 };
 
-/*  Opciones cerradas de salud y temperamento del animal 
+/* ---------- Opciones cerradas de salud y temperamento del animal ----------
    Cada campo guarda la clave (izquierda) y la app muestra la etiqueta (derecha). */
 const OPCIONES_ANIMAL = {
   salud_general: { titulo: 'Estado de salud general', opciones: { excelente: 'Excelente', bueno: 'Bueno', regular: 'Regular', recuperacion: 'En recuperación' } },
@@ -310,7 +310,7 @@ const OPCIONES_ANIMAL = {
 };
 const CAMPOS_ANIMAL = Object.keys(OPCIONES_ANIMAL);
 
-/*  Periodos de estadísticas (RF-35 / RF-36)  */
+/* ---------- Periodos de estadísticas (RF-35 / RF-36) ---------- */
 function periodo(query) {
   const t = hoy();
   if (query.periodo === '7') return { inicio: sumarDias(t, -6), fin: t };
@@ -324,7 +324,7 @@ function periodo(query) {
   return { inicio, fin };
 }
 
-/*  Notificaciones (RF-24) 
+/* ---------- Notificaciones (RF-24) ----------
    enlace: ruta de la app a la que lleva al hacer clic (ej. '#/solicitudes?id=12').
    Dentro de una transacción se usa un SAVEPOINT: si la notificación falla, no se pierde la operación principal. */
 async function notificar(usuarioId, texto, conn, enlace = null) {

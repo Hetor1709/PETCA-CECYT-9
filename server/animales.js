@@ -24,7 +24,7 @@ const CENTRO_ALCALDIA = {
   tlahuac: [19.2869, -99.0040], tlalpan: [19.2900, -99.1700], 'venustiano carranza': [19.4300, -99.1000], xochimilco: [19.2570, -99.1030],
 };
 
-/* -Catálogos para las listas de selección */
+/* ---------- Catálogos para las listas de selección ---------- */
 async function catalogos() {
   const filas = await q('SELECT id, catalogo, nombre, orden, activo FROM catalogo_valores ORDER BY catalogo, orden, id');
   const res = { tamano: [], edad: [], tipo_requisito: [], alcaldia: [], vacuna: [], documento: [] };
@@ -38,7 +38,7 @@ async function catalogos() {
 const DIMS = { razas: Object.fromEntries(RAZAS_LISTA.map((x) => [x.id, { nombre: x.nombre, peso: x.peso, altura: x.altura }])), tamano: DIMS_TAMANO };
 r.get('/catalogos', h(async (req, res) => res.json({ ...(await catalogos()), animal: OPCIONES_ANIMAL, dims: DIMS })));
 
-/* Catálogo público (RNF-01) */
+/* ---------- Catálogo público (RNF-01) ---------- */
 const SELECT_TARJETA = `
   SELECT a.id, a.nombre, a.raza, a.raza_aprox, a.estado, e.nombre AS edad, t.nombre AS tamano,
          a.temperamento, a.temp_general, a.temp_perros, a.esterilizado, u.nombre AS refugio, a.refugio_id, al.nombre AS alcaldia
@@ -67,7 +67,7 @@ r.get('/animales', h(async (req, res) => {
     }
     where.push(`(${cond.join(' OR ')})`);
   }
-  //Filtros de búsqueda
+  // ---- Filtros de búsqueda ----
   const f = req.query;
   if (f.tamano) { where.push('a.tamano_id = ?'); params.push(V.id(f.tamano)); }
   if (f.raza) { where.push('(a.raza = ? OR a.raza_aprox = ?)'); params.push(limpiar(f.raza), limpiar(f.raza)); }
@@ -104,7 +104,7 @@ async function horario(refugioId, conn) {
   return q('SELECT dia, cerrado, abre, cierra FROM refugio_horarios WHERE refugio_id = ? ORDER BY dia', [refugioId], conn);
 }
 
-/* Refugios públicos: búsqueda y perfil (sin correos, RNF-03) */
+/* ---------- Refugios públicos: búsqueda y perfil (sin correos, RNF-03) ---------- */
 const SELECT_REFUGIO = `
   SELECT u.id, u.nombre, rf.institucion, al.nombre AS alcaldia, rf.lat, rf.lng,
          (SELECT COUNT(*) FROM animales a WHERE a.refugio_id = u.id AND a.eliminado = 0 AND a.estado = 'disponible') AS disponibles,
@@ -181,6 +181,7 @@ r.get('/animales/:id', h(async (req, res) => {
   res.json(a);
 }));
 
+/* ====================== Refugio ====================== */
 const soloRefugio = requiere('refugio');
 
 /* Valida todos los campos de RF-12. "actual" permite conservar valores de catálogo ya desactivados (RF-31). */
@@ -468,7 +469,7 @@ r.post('/refugio/animales/:id/estado', soloRefugio, h(async (req, res) => {
   res.json({ mensaje: estado === 'adoptado' ? `Estado actualizado a Adoptado. Solicitudes pendientes cerradas: ${cerradas}.` : 'Estado actualizado a Disponible.' });
 }));
 
-/*RF-11: perfil del Refugio */
+/* ---------- RF-11: perfil del Refugio ---------- */
 r.get('/refugio/perfil', soloRefugio, h(async (req, res) => {
   const p = await uno(
     `SELECT u.nombre, u.correo, rf.institucion, rf.direccion, rf.calle, rf.num_ext, rf.num_int, rf.colonia, rf.cp,
@@ -489,7 +490,7 @@ r.put('/refugio/perfil', soloRefugio, h(async (req, res) => {
   res.json(await solicitarCambioRefugio(req.usuario, d));
 }));
 
-/* RF-35: estadísticas propias */
+/* ---------- RF-35: estadísticas propias ---------- */
 r.get('/refugio/estadisticas', soloRefugio, h(async (req, res) => {
   const p = periodo(req.query);
   const ing = await uno('SELECT COUNT(*) AS n FROM animales WHERE refugio_id = ? AND fecha_ingreso BETWEEN ? AND ?', [req.usuario.id, p.inicio, p.fin]);
