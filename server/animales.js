@@ -306,4 +306,195 @@ r.get('/refugio/animales/:id', soloRefugio, h(async (req, res) => {
   a.vacunas = await q('SELECT nombre, fecha FROM vacunas WHERE animal_id = ? ORDER BY id', [a.id]);
   res.json(a);
 }));
-//Ahorita lo termino
+
+/* RF-12: publicar */
+r.post('/refugio/animales', soloRefugio, h(async (req, res) => {
+  const v = await validarAnimal(leerDatos(req), {}, req.usuario.id);
+  const t = ahora();
+  const id = await tx(async (c) => {
+      const ins = await q(
+        `INSERT INTO animales (refugio_id, nombre, raza, raza_aprox, edad_id, tamano_id,
+                               salud_general, tratamiento, temp_general, temp_perros, temp_desconocidos, temp_comida, fecha_ingreso,
+                               esterilizado, fecha_esterilizacion, desparasitado, peso_kg, altura_cm, publicado_en, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [req.usuario.id, v.nombre, v.raza, v.razaAprox, v.edadId, v.tamanoId, ...CAMPOS_ANIMAL.map((c) => v.cerrados[c]), v.fechaIngreso,
+          v.esterilizado, v.fechaEst, v.desparasitado, v.dims.peso, v.dims.altura, t, t], c);
+      await guardarDetalle(c, ins.insertId, v);
+      return ins.insertId;
+  });
+  res.status(201).json({ id, mensaje: 'Publicación creada con estado Disponible.' });
+}));
+
+/* RF-13: editar */
+r.put('/refugio/animales/:id', soloRefugio, h(async (req, res) => {
+  const id = V.id(req.params.id);
+  const actual = await propio(req, id);
+  if (actual.estado === 'adoptado') falla('Una publicación adoptada no es editable.', 409);
+  const reqActuales = await q('SELECT nombre, tipo_id, otro FROM requisitos WHERE animal_id = ?', [id]);
+  const tipos = reqActuales.map((x) => x.tipo_id);
+  const documentos = reqActuales.filter((x) => !x.otro).map((x) => x.nombre); // documentos ya elegidos aunque se hayan desactivado
+  const vacunasActuales = (await q('SELECT nombre FROM vacunas WHERE animal_id = ?', [id])).map((x) => x.nombre);
+  const datos = leerDatos(req);
+  const v = await validarAnimal(datos, { edad_id: actual.edad_id, tamano_id: actual.tamano_id, tipos, documentos, vacunas: vacunasActuales }, req.usuario.id, id);
+  // Cambios de fondo (identidad del perro): si hay solicitudes activas, esas personas pidieron OTRO perro.
+  // Se avisa al refugio; si confirma, las solicitudes se cancelan y cada adoptante recibe una notificación.
+  const fuertes = [['nombre', v.nombre, 'nombre'], ['raza', v.raza, 'raza'], ['raza_aprox', v.razaAprox, 'raza parecida'],
+    ['edad_id', v.edadId, 'edad'], ['tamano_id', v.tamanoId, 'tamaño']].filter(([k, nuevo]) => String(actual[k] ?? '') !== String(nuevo ?? ''));
+  const reiniciadas = await tx(async (c) => {
+      const a = await propio(req, id, c, true);
+      if (a.estado === 'adoptado') falla('Una publicación adoptada no es editable.', 409);
+      const activas = fuertes.length ? await q(
+        "SELECT id, adoptante_id FROM solicitudes WHERE animal_id = ? AND estado IN ('pendiente','aprobada') AND concretada_en IS NULL FOR UPDATE", [id], c) : [];
+      if (activas.length && datos.confirmar_reinicio !== true) {
+        falla(`Cambiaste ${fuertes.map((x) => x[2]).join(', ')} y ${a.nombre} tiene ${activas.length} solicitud(es) activa(s). Si guardas, esas solicitudes se cancelarán y se avisará a cada adoptante.`,
+          409, { codigo: 'REINICIO', solicitudes: activas.length, campos: fuertes.map((x) => x[2]) });
+      }
+      await q(
+        `UPDATE animales SET nombre = ?, raza = ?, raza_aprox = ?, edad_id = ?, tamano_id = ?,
+                salud_general = ?, tratamiento = ?, temp_general = ?, temp_perros = ?, temp_desconocidos = ?, temp_comida = ?,
+                fecha_ingreso = ?, esterilizado = ?, fecha_esterilizacion = ?, desparasitado = ?, peso_kg = ?, altura_cm = ?, actualizado_en = ? WHERE id = ?`,
+        [v.nombre, v.raza, v.razaAprox, v.edadId, v.tamanoId, ...CAMPOS_ANIMAL.map((c) => v.cerrados[c]), v.fechaIngreso, v.esterilizado, v.fechaEst,
+          v.desparasitado, v.dims.peso, v.dims.altura, ahora(), id], c);
+      await guardarDetalle(c, id, v);
+      for (const s of activas) {
+        await q("UPDATE solicitudes SET estado = 'cancelada', motivo_rechazo = ?, rechazada_en = ? WHERE id = ?",
+          [`El refugio cambió datos importantes de la publicación (${fuertes.map((x) => x[2]).join(', ')}).`, ahora(), s.id], c);
+        await q('DELETE FROM citas WHERE solicitud_id = ?', [s.id], c);
+        await notificar(s.adoptante_id, `Tu solicitud para ${a.nombre} se canceló porque el refugio cambió datos importantes del perro (${fuertes.map((x) => x[2]).join(', ')}). Revisa la ficha y, si te sigue interesando, vuelve a solicitar.`, c, `#/animal/${id}`);
+      }
+      return activas.length;
+  });
+  res.json({ mensaje: reiniciadas ? `Cambios guardados. Se cancelaron ${reiniciadas} solicitud(es) y se avisó a cada adoptante.` : 'Cambios guardados.' });
+}));
+
+/* RF-14: eliminar (se conserva el registro para estadísticas) */
+r.delete('/refugio/animales/:id', soloRefugio, h(async (req, res) => {
+  const id = V.id(req.params.id);
+  await tx(async (c) => {
+    await propio(req, id, c, true);
+    const n = await uno("SELECT COUNT(*) AS n FROM solicitudes WHERE animal_id = ? AND estado IN ('pendiente','aprobada')", [id], c);
+    if (Number(n.n) > 0) falla('La publicación tiene solicitudes activas. Rechácelas antes de eliminarla.', 409);
+    await q("UPDATE animales SET eliminado = 1, eliminado_por = 'refugio', eliminado_en = ? WHERE id = ?", [ahora(), id], c);
+  });
+  res.json({ mensaje: 'Publicación eliminada.' });
+}));
+
+/* RF-23: rechaza las solicitudes activas de un animal adoptado y avisa a cada adoptante.
+   Cierra las pendientes y también cualquier otra aprobada que no sea la que concretó la adopción. */
+async function cerrarPendientes(c, animal) {
+  const pend = await q(
+    `SELECT id, adoptante_id FROM solicitudes
+      WHERE animal_id = ? AND (estado = 'pendiente' OR (estado = 'aprobada' AND concretada_en IS NULL)) FOR UPDATE`, [animal.id], c);
+  const t = ahora();
+  for (const s of pend) {
+    await q("UPDATE solicitudes SET estado = 'rechazada', motivo_rechazo = 'El animal ya fue adoptado', rechazada_en = ? WHERE id = ?", [t, s.id], c);
+    await q('DELETE FROM citas WHERE solicitud_id = ?', [s.id], c);
+    await notificar(s.adoptante_id, `Su solicitud para ${animal.nombre} fue rechazada: el animal ya fue adoptado.`, c, `#/solicitudes?id=${s.id}`);
+  }
+  return pend.length;
+}
+
+/* Lista de entrega (protocolo CDMX, Ley de Protección y Bienestar de los Animales, art. 32):
+   el perro se entrega esterilizado (o con compromiso si es cachorro), desparasitado y con su cartilla de vacunación;
+   el adoptante firma la carta compromiso y el perro se registra en el RUAC (Registro Único de Animales de Compañía). */
+function validarEntrega(e, animal) {
+  const d = e && typeof e === 'object' ? e : {};
+  const si = (k) => d[k] === true;
+  if (!si('carta_firmada')) falla('Para entregar al perro, el adoptante debe firmar la carta compromiso de adopción.');
+  if (!si('desparasitado')) falla('El perro debe entregarse desparasitado.');
+  if (!si('cartilla')) falla('Entrega la cartilla de vacunación (o el registro de vacunas) al adoptante.');
+  const meses = mesesDeEdad(animal.edad);
+  const esterilizado = Number(animal.esterilizado) === 1 || si('esterilizado');
+  let compromiso = null;
+  if (!esterilizado) {
+    if (meses == null || meses >= 6) falla('El perro debe entregarse esterilizado (Ley de Protección a los Animales de la CDMX, art. 32).');
+    if (!esFecha(d.esterilizar_antes) || d.esterilizar_antes <= hoy() || d.esterilizar_antes > sumarDias(hoy(), 240)) {
+      falla('Cachorro sin esterilizar: indique la fecha comprometida para esterilizarlo (en los próximos 8 meses).');
+    }
+    compromiso = d.esterilizar_antes;
+  }
+  const ruac = limpiar(d.ruac).toUpperCase().slice(0, 30);
+  if (ruac && !/^[A-Z0-9-]{4,30}$/.test(ruac)) falla('El folio del RUAC solo puede tener letras, números y guiones.');
+  return { carta_firmada: true, desparasitado: true, cartilla: true, esterilizado, esterilizar_antes: compromiso, ruac: ruac || null };
+}
+
+/* RF-22: concreta la adopción a partir de la solicitud aprobada. Lo usan RF-22 y RF-15 (mismo flujo). */
+async function marcarAdopcion(c, s, fecha, entrega) {
+  if (s.estado !== 'aprobada' || s.concretada_en) falla('No hay una solicitud aprobada para el animal.', 409);
+  if (s.animal_estado === 'adoptado' || s.eliminado) falla('El animal ya no está disponible para adopción.', 409);
+  if (!s.visita) falla('Antes de entregar, registra la visita domiciliaria (realizada o no requerida) en la solicitud.', 409);
+  if (!esFecha(fecha) || fecha > hoy() || fecha < String(s.aprobada_en).slice(0, 10)) {
+    falla('La fecha de concreción debe estar entre la fecha de aprobación y hoy.');
+  }
+  const animal = await uno('SELECT a.esterilizado, e.nombre AS edad FROM animales a JOIN catalogo_valores e ON e.id = a.edad_id WHERE a.id = ?', [s.animal_id], c);
+  const lista = validarEntrega(entrega, animal);
+  await q("UPDATE animales SET estado = 'adoptado', adoptado_en = ?, actualizado_en = ?, esterilizado = ?, desparasitado = 1 WHERE id = ?",
+    [fecha, ahora(), lista.esterilizado ? 1 : 0, s.animal_id], c);
+  await q('UPDATE solicitudes SET concretada_en = ?, entrega = ? WHERE id = ?', [fecha, JSON.stringify(lista), s.id], c);
+  // Seguimiento posterior: 1 semana, 1 mes y 3 meses después de la entrega
+  for (const [etapa, dias] of [['1_semana', 7], ['1_mes', 30], ['3_meses', 90]]) {
+    await q('INSERT INTO seguimientos (solicitud_id, etapa, programado) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE solicitud_id = solicitud_id', [s.id, etapa, sumarDias(fecha, dias)], c);
+  }
+  await notificar(s.adoptante_id, `¡Felicidades! La adopción de ${s.animal} quedó concretada el ${fecha}. El refugio te contactará para el seguimiento.`, c, `#/solicitudes?id=${s.id}`);
+  return cerrarPendientes(c, { id: s.animal_id, nombre: s.animal });
+}
+
+/* RF-15: cambiar estado Disponible / Adoptado */
+r.post('/refugio/animales/:id/estado', soloRefugio, h(async (req, res) => {
+  const id = V.id(req.params.id);
+  const estado = req.body && req.body.estado;
+  if (!['disponible', 'adoptado'].includes(estado)) falla('Seleccione un estado válido.');
+  const cerradas = await tx(async (c) => {
+    const a = await propio(req, id, c, true);
+    if (a.estado === estado) falla('La publicación ya tiene el estado seleccionado.', 409);
+    if (estado === 'adoptado') {
+      // Mismo flujo que RF-22: exige la solicitud aprobada y la fecha de concreción
+      const s = await uno(
+        `SELECT s.*, CAST(? AS CHAR) AS animal, CAST(? AS CHAR) AS animal_estado, 0 AS eliminado FROM solicitudes s
+          WHERE s.animal_id = ? AND s.estado = 'aprobada' AND s.concretada_en IS NULL FOR UPDATE`, [a.nombre, a.estado, id], c);
+      if (!s) falla('No hay una solicitud aprobada para el animal.', 409);
+      return marcarAdopcion(c, s, req.body.fecha, req.body.entrega);
+    }
+    // Volver a Disponible: la adopción se revierte y la solicitud vuelve a quedar aprobada sin concretar
+    await q("UPDATE animales SET estado = 'disponible', adoptado_en = NULL, actualizado_en = ? WHERE id = ?", [ahora(), id], c);
+    const conc = await q('SELECT id, adoptante_id FROM solicitudes WHERE animal_id = ? AND concretada_en IS NOT NULL', [id], c);
+    for (const s of conc) {
+      await q('UPDATE solicitudes SET concretada_en = NULL WHERE id = ?', [s.id], c);
+      await q('DELETE FROM seguimientos WHERE solicitud_id = ? AND realizado_en IS NULL', [s.id], c);
+      await notificar(s.adoptante_id, `La adopción de ${a.nombre} se revirtió; el refugio se pondrá en contacto contigo.`, c, `#/solicitudes?id=${s.id}`);
+    }
+    return 0;
+  });
+  res.json({ mensaje: estado === 'adoptado' ? `Estado actualizado a Adoptado. Solicitudes pendientes cerradas: ${cerradas}.` : 'Estado actualizado a Disponible.' });
+}));
+
+/*RF-11: perfil del Refugio */
+r.get('/refugio/perfil', soloRefugio, h(async (req, res) => {
+  const p = await uno(
+    `SELECT u.nombre, u.correo, rf.institucion, rf.direccion, rf.calle, rf.num_ext, rf.num_int, rf.colonia, rf.cp,
+            rf.telefono, rf.alcaldia_id, rf.lat, rf.lng, rf.place_id
+       FROM usuarios u JOIN refugios rf ON rf.usuario_id = u.id WHERE u.id = ?`, [req.usuario.id]);
+  p.horario = await horario(req.usuario.id);
+  // Cambio esperando aprobación del Administrador (se muestra al refugio)
+  p.cambio_pendiente = await uno("SELECT id, datos, LEFT(creado_en, 16) AS creado_en FROM refugio_cambios WHERE refugio_id = ? AND estado = 'pendiente'", [req.usuario.id]);
+  p.ultimo_rechazo = await uno("SELECT motivo, LEFT(revisado_en, 16) AS revisado_en FROM refugio_cambios WHERE refugio_id = ? AND estado = 'rechazado' ORDER BY id DESC LIMIT 1", [req.usuario.id]);
+  res.json(p);
+}));
+
+/* Institución, dirección, teléfono y horario: el cambio queda pendiente hasta que el Administrador lo aprueba */
+r.put('/refugio/perfil', soloRefugio, h(async (req, res) => {
+  const b = req.body || {};
+  const actual = await uno('SELECT institucion FROM refugios WHERE usuario_id = ?', [req.usuario.id]);
+  const d = await validarRefugio({ ...b, institucion: b.institucion === undefined ? actual.institucion : b.institucion }, req.usuario.id);
+  res.json(await solicitarCambioRefugio(req.usuario, d));
+}));
+
+/* RF-35: estadísticas propias */
+r.get('/refugio/estadisticas', soloRefugio, h(async (req, res) => {
+  const p = periodo(req.query);
+  const ing = await uno('SELECT COUNT(*) AS n FROM animales WHERE refugio_id = ? AND fecha_ingreso BETWEEN ? AND ?', [req.usuario.id, p.inicio, p.fin]);
+  const ado = await uno("SELECT COUNT(*) AS n FROM animales WHERE refugio_id = ? AND estado = 'adoptado' AND adoptado_en BETWEEN ? AND ?", [req.usuario.id, p.inicio, p.fin]);
+  res.json({ ...p, ingresos: Number(ing.n), adopciones: Number(ado.n) });
+}));
+
+module.exports = { router: r, cerrarPendientes, marcarAdopcion, horario };
