@@ -33,7 +33,7 @@ function mapa(x) {
   };
 }
 
-/*  Resumen del panel  */
+/* Resumen del panel */
 r.get('/admin/resumen', h(async (req, res) => {
   const admin = req.usuario.tipo === 'admin';
   const [pend, rep, err, cam] = await Promise.all([
@@ -50,7 +50,7 @@ r.post('/admin/errores-notificacion/revisados', soloAdmin, h(async (req, res) =>
   res.json({ ok: true });
 }));
 
-/*  RF-25: verificar refugios (con la búsqueda de Maps lista para revisar)  */
+/* RF-25: verificar refugios (con la búsqueda de Maps lista para revisar) */
 r.get('/admin/refugios-pendientes', soloAdmin, h(async (req, res) => {
   const lista = await q(
     `SELECT u.id, u.nombre, u.correo, u.creado, u.aviso_version, u.aviso_fecha, rf.institucion, rf.direccion, rf.telefono,
@@ -89,7 +89,7 @@ async function decidirRefugio(req, aceptar) {
 r.post('/admin/refugios/:id/aceptar', soloAdmin, h(async (req, res) => { await decidirRefugio(req, true); res.json({ mensaje: 'Cuenta verificada.' }); }));
 r.post('/admin/refugios/:id/rechazar', soloAdmin, h(async (req, res) => { await decidirRefugio(req, false); res.json({ mensaje: 'Cuenta rechazada.' }); }));
 
-/*  Refugios: tabla con sus datos e indicadores  */
+/* Refugios: tabla con sus datos e indicadores */
 r.get('/admin/refugios', soloAdmin, h(async (req, res) => {
   const where = ["u.tipo = 'refugio'", 'u.purgado = 0'];
   const params = [];
