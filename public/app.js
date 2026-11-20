@@ -3251,3 +3251,548 @@
       },
     };
   }
+
+  /* RF-28 / RF-32: un solo Administrador; se pueden subir cuentas a Funcionario (reportes y estadísticas) */
+  async function vistaAdminCuentas(ctx) {
+    const q = (ctx.query.get('q') || '').slice(0, 60);
+    const TIPOS = ['adoptante', 'refugio', 'funcionario', 'admin'];
+    const tipo = TIPOS.includes(ctx.query.get('tipo')) ? ctx.query.get('tipo') : '';
+    const pagina = idValido(ctx.query.get('pagina')) || 1;
+    const r = await api(conQuery('/admin/cuentas', { q, tipo, pagina }));
+    return {
+      html: marcoAdmin('#/admin/cuentas', 'Cuentas', html`
+        <form class="busqueda-admin" data-buscar>
+          <input class="campo__entrada" name="q" type="search" placeholder="Buscar por nombre o correo" value="${q}" maxlength="60">
+          <select class="campo__entrada" name="tipo"><option value="">Todos los tipos</option>${TIPOS.map((t) => html`<option value="${t}"${si(t === tipo, 'selected')}>${ETQ[t]}</option>`)}</select>
+          <button class="boton-contorno boton-contorno--chico" type="submit">Buscar</button>
+        </form>
+        <p class="nota">Solo existe un Administrador. Un Funcionario puede atender reportes y ver estadísticas.</p>
+        ${!r.cuentas.length ? html`<div class="vacio">No se encontraron cuentas.</div>` : html`
+        <div class="tabla-desliza"><table class="tabla">
+          <thead><tr><th>Nombre</th><th>Correo</th><th>Tipo</th><th>Estado</th><th>Alta</th><th></th></tr></thead>
+          <tbody>${r.cuentas.map((c) => html`
+            <tr>
+              <td data-col="Nombre"><span class="con-avatar">${avatar(c, 'mini')}<strong>${c.nombre}</strong></span></td>
+              <td data-col="Correo" class="texto-largo">${c.correo}</td>
+              <td data-col="Tipo">${ETQ[c.tipo]}</td>
+              <td>${insignia(c.estado, ETQ[c.estado] || c.estado)}</td>
+              <td data-col="Alta">${c.creado}</td>
+              <td><div class="acciones">
+                ${c.tipo === 'adoptante' && c.estado === 'activa' ? html`<button class="boton-contorno boton-contorno--chico" type="button" data-rol="funcionario" data-id="${c.id}">Hacer funcionario</button>` : ''}
+                ${c.tipo === 'funcionario' ? html`<button class="boton-contorno boton-contorno--chico" type="button" data-rol="quitar-funcionario" data-id="${c.id}">Quitar funcionario</button>` : ''}
+                ${c.tipo === 'refugio' ? html`<a class="boton-contorno boton-contorno--chico" href="#/admin/refugios?id=${c.id}">Ver refugio</a>` : ''}
+                ${c.tipo !== 'admin' && c.estado !== 'eliminada' ? html`<button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-eliminar="${c.id}">Eliminar</button>` : ''}
+              </div></td>
+            </tr>`)}</tbody>
+        </table></div>
+        ${paginacion(r.pagina, r.total, r.porPagina)}`}`),
+      montar(raiz) {
+        const f = $('[data-buscar]', raiz);
+        f.addEventListener('submit', (e) => { e.preventDefault(); location.hash = conQuery('#/admin/cuentas', { q: f.q.value.trim(), tipo: f.tipo.value }); });
+        $$('[data-pagina]', raiz).forEach((b) => b.addEventListener('click', () => { location.hash = conQuery('#/admin/cuentas', { q, tipo, pagina: b.dataset.pagina }); }));
+        $$('[data-rol]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const c = r.cuentas.find((x) => x.id === Number(b.dataset.id));
+          const subir = b.dataset.rol === 'funcionario';
+          const ok = await dialogo({
+            titulo: subir ? 'Hacer Funcionario' : 'Quitar rol de Funcionario',
+            texto: subir ? `${c.nombre} podrá atender reportes y ver estadísticas. Mientras tenga el rol no podrá adoptar (debe no tener solicitudes activas).`
+              : `${c.nombre} volverá a ser Adoptante.`,
+            confirmar: subir ? 'Asignar' : 'Quitar',
+            accion: async () => { aviso((await api(`/admin/cuentas/${c.id}/${b.dataset.rol}`, { metodo: 'POST' })).mensaje); },
+          });
+          if (ok) navegar();
+        }));
+        $$('[data-eliminar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const c = r.cuentas.find((x) => x.id === Number(b.dataset.eliminar));
+          const ok = await dialogo({
+            titulo: `Eliminar la cuenta de ${c.nombre}`, confirmar: 'Eliminar cuenta', peligro: true,
+            cuerpo: html`<label class="campo"><span class="campo__etiqueta">Motivo</span><textarea class="campo__textarea" name="motivo" maxlength="300" placeholder="10 a 300 caracteres"></textarea></label>`,
+            accion: async (fm) => {
+              const motivo = revisarTexto(fm.motivo.value, { min: 10, max: 300, campo: 'El motivo', minPalabras: 2, lineas: 2 });
+              await api(`/admin/cuentas/${c.id}/eliminar`, { metodo: 'POST', datos: { motivo } });
+            },
+          });
+          if (ok) { aviso('Cuenta eliminada.'); navegar(); }
+        }));
+      },
+    };
+  }
+
+  /* RF-29 a RF-31 */
+  async function vistaAdminCatalogos() {
+    const cat = await catalogos(true);
+    const NOMBRES = { tamano: 'Tamaños', edad: 'Rangos de edad', tipo_requisito: 'Tipos de requisito', vacuna: 'Vacunas', documento: 'Documentos requeridos' };
+    return {
+      html: marcoAdmin('#/admin/catalogos', 'Catálogos', html`
+        <div class="catalogos">${Object.entries(NOMBRES).map(([k, t]) => html`
+          <section class="panel">
+            <h2 class="panel__titulo">${t}</h2>
+            ${cat[k].map((v) => html`
+              <div class="valor ${v.activo ? '' : 'valor--inactivo'}">
+                <span>${v.nombre}</span>
+                <span class="acciones">
+                  <button class="enlace" type="button" data-renombrar="${v.id}" data-nombre="${v.nombre}">Renombrar</button>
+                  <button class="enlace" type="button" data-${v.activo ? 'desactivar' : 'activar'}="${v.id}">${v.activo ? 'Desactivar' : 'Activar'}</button>
+                </span>
+              </div>`)}
+            <form class="agregar" data-agregar="${k}"><input class="campo__entrada" name="nombre" maxlength="50" placeholder="Nuevo valor" aria-label="Nuevo valor de ${t}"><button class="boton-contorno boton-contorno--chico" type="submit">Agregar</button></form>
+          </section>`)}
+        </div>`),
+      montar(raiz) {
+        const hecho = (m) => { aviso(m); estado.catalogos = null; navegar(); };
+        $$('[data-agregar]', raiz).forEach((f) => f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const n = f.nombre.value.trim();
+          if (!V.entre(n, 1, 50)) return aviso('El nombre del valor debe tener de 1 a 50 caracteres.', 'error');
+          try { const r = await api('/admin/catalogos', { metodo: 'POST', datos: { catalogo: f.dataset.agregar, nombre: n } }); hecho(r.mensaje); } catch (err) { aviso(textoError(err), 'error'); }
+        }));
+        $$('[data-renombrar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const ok = await dialogo({
+            titulo: 'Renombrar valor', confirmar: 'Guardar',
+            cuerpo: html`<label class="campo"><span class="campo__etiqueta">Nuevo nombre</span><input class="campo__entrada" name="nombre" maxlength="50" value="${b.dataset.nombre}"></label>`,
+            accion: async (f) => {
+              if (!V.entre(f.nombre.value.trim(), 1, 50)) fallo('El nombre del valor debe tener de 1 a 50 caracteres.');
+              await api(`/admin/catalogos/${b.dataset.renombrar}`, { metodo: 'PUT', datos: { nombre: f.nombre.value.trim() } });
+            },
+          });
+          if (ok) hecho('Valor renombrado.');
+        }));
+        $$('[data-desactivar], [data-activar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const des = !!b.dataset.desactivar;
+          const ok = await dialogo({
+            titulo: des ? 'Desactivar valor' : 'Activar valor', texto: des ? 'Dejará de aparecer en las nuevas selecciones. Las publicaciones existentes lo conservan.' : 'Volverá a aparecer en las listas de selección.',
+            accion: () => api(`/admin/catalogos/${b.dataset.desactivar || b.dataset.activar}/${des ? 'desactivar' : 'activar'}`, { metodo: 'POST' }),
+          });
+          if (ok) hecho(des ? 'Valor desactivado.' : 'Valor activado.');
+        }));
+      },
+    };
+  }
+
+  /* ---------- Gráficas SVG (sin librerías): serie de tiempo, barras horizontales y barra apilada ---------- */
+  const SERIES = [['solicitudes', 'Solicitudes', 'g1'], ['ingresos', 'Ingresos', 'g2'], ['adopciones', 'Adopciones', 'g3']];
+  const fmtClave = (k) => (k.length === 7 ? `${MESES_CORTOS[Number(k.slice(5)) - 1]} ${k.slice(2, 4)}` : `${Number(k.slice(8))} ${MESES_CORTOS[Number(k.slice(5, 7)) - 1]}`);
+  const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  function graficaSerie(serie) {
+    const W = 640; const H = 220; const m = { l: 34, r: 12, t: 12, b: 26 };
+    const n = serie.claves.length;
+    const max = Math.max(1, ...SERIES.flatMap(([k]) => serie[k]));
+    const tope = max <= 4 ? 4 : Math.ceil(max / 4) * 4;
+    const x = (i) => m.l + (n === 1 ? (W - m.l - m.r) / 2 : (i * (W - m.l - m.r)) / (n - 1));
+    const y = (v) => H - m.b - (v / tope) * (H - m.t - m.b);
+    const paso = Math.max(1, Math.ceil(n / 7));
+    return html`
+      <figure class="grafica">
+        <ul class="leyenda">${SERIES.map(([k, t, c]) => html`<li><span class="leyenda__marca leyenda__marca--${c}"></span>${t} <strong>${serie[k].reduce((a, b) => a + b, 0)}</strong></li>`)}</ul>
+        <svg class="grafica__svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Solicitudes, ingresos y adopciones por ${serie.claves[0] && serie.claves[0].length === 7 ? 'mes' : 'día'}">
+          ${[0, 1, 2, 3, 4].map((i) => { const v = (tope / 4) * i; return html`<line class="grafica__rejilla" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"></line><text class="grafica__eje" x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`; })}
+          ${serie.claves.map((k, i) => (i % paso === 0 ? html`<text class="grafica__eje" x="${x(i)}" y="${H - 8}" text-anchor="middle">${fmtClave(k)}</text>` : ''))}
+          ${SERIES.map(([k, , c]) => html`<polyline class="grafica__linea grafica__linea--${c}" points="${serie[k].map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"></polyline>`)}
+          ${serie.claves.map((k, i) => html`<g class="grafica__punto">
+            <rect x="${x(i) - Math.max(4, (W - m.l - m.r) / Math.max(1, n - 1) / 2)}" y="${m.t}" width="${Math.max(8, (W - m.l - m.r) / Math.max(1, n - 1))}" height="${H - m.t - m.b}" fill="transparent"></rect>
+            <line class="grafica__guia" x1="${x(i)}" x2="${x(i)}" y1="${m.t}" y2="${H - m.b}"></line>
+            ${SERIES.map(([s, , c]) => html`<circle class="grafica__marca grafica__marca--${c}" cx="${x(i)}" cy="${y(serie[s][i])}" r="4"></circle>`)}
+            <title>${fmtClave(k)} — ${SERIES.map(([s, t]) => `${t}: ${serie[s][i]}`).join(' · ')}</title></g>`)}
+        </svg>
+        <details class="grafica__tabla"><summary>Ver como tabla</summary>
+          <div class="tabla-desliza"><table class="tabla"><thead><tr><th>Periodo</th>${SERIES.map(([, t]) => html`<th class="num">${t}</th>`)}</tr></thead>
+          <tbody>${serie.claves.map((k, i) => html`<tr><td>${fmtClave(k)}</td>${SERIES.map(([s]) => html`<td class="num">${serie[s][i]}</td>`)}</tr>`)}</tbody></table></div></details>
+      </figure>`;
+  }
+  const barras = (items, titulo, sufijo = '') => {
+    const max = Math.max(1, ...items.map((x) => x.n));
+    return html`<figure class="grafica grafica--barras"><figcaption class="grafica__titulo">${titulo}</figcaption>
+      ${!items.length ? html`<p class="nota">Sin datos en el periodo.</p>` : html`<ul class="barras">${items.map((x) => html`
+        <li class="barras__fila" title="${x.nombre}: ${x.n}${sufijo}"><span class="barras__nombre">${x.nombre}</span>
+          <span class="barras__pista"><span class="barras__barra" data-ancho="${Math.max(2, (x.n / max) * 100).toFixed(1)}"></span></span><span class="barras__valor">${x.n}</span></li>`)}</ul>`}</figure>`;
+  };
+  const ESTADOS_SOL = [['pendiente', 'Pendientes', 'g4'], ['aprobada', 'En proceso', 'g1'], ['concretada', 'Adoptadas', 'g3'], ['rechazada', 'Rechazadas', 'g2'], ['cancelada', 'Canceladas', 'g5']];
+  const apilada = (estados) => {
+    const total = ESTADOS_SOL.reduce((a, [k]) => a + (estados[k] || 0), 0);
+    return html`<figure class="grafica"><figcaption class="grafica__titulo">Solicitudes por estado (${total})</figcaption>
+      ${!total ? html`<p class="nota">Sin solicitudes en el periodo.</p>` : html`
+      <div class="apilada" role="img" aria-label="${ESTADOS_SOL.map(([k, t]) => `${t}: ${estados[k] || 0}`).join(', ')}">${ESTADOS_SOL.filter(([k]) => estados[k]).map(([k, t, c]) => html`<span class="apilada__seg apilada__seg--${c}" data-crece="${estados[k]}" title="${t}: ${estados[k]}"></span>`)}</div>
+      <ul class="leyenda">${ESTADOS_SOL.map(([k, t, c]) => html`<li><span class="leyenda__marca leyenda__marca--${c}"></span>${t} <strong>${estados[k] || 0}</strong></li>`)}</ul>`}</figure>`;
+  };
+
+  /* RF-36 / RF-37 */
+  function vistaAdminEstadisticas() {
+    return {
+      html: marcoAdmin('#/admin/estadisticas', 'Estadísticas generales', html`
+        <section class="panel panel--ancho">${selectorPeriodo()}
+          <div class="panel__acciones"><button class="boton-contorno boton-contorno--relleno" type="button" data-csv disabled>Exportar CSV</button></div>
+          <p class="mensaje mensaje--error" data-error-csv role="alert"></p>
+          <div data-cifras></div>
+        </section>`),
+      montar(raiz) {
+        let ultimos = null;
+        const btn = $('[data-csv]', raiz);
+        montarPeriodo(raiz, async (params) => {
+          const r = await api(conQuery('/admin/estadisticas', params));
+          ultimos = params;
+          btn.disabled = false;
+          const kpi = [
+            ['azul', r.animales_publicados, 'perros ingresaron'], ['durazno', r.adopciones_concretadas, 'adopciones concretadas'],
+            ['blanco', r.solicitudes, 'solicitudes recibidas'], ['blanco', r.tasa_aprobacion == null ? '—' : `${r.tasa_aprobacion}%`, 'de solicitudes decididas se aprobaron'],
+            ['blanco', r.dias_promedio_adopcion == null ? '—' : r.dias_promedio_adopcion, 'días promedio del ingreso a la adopción'],
+            ['blanco', r.refugios_activos, 'refugios activos'], ['blanco', r.reportes, 'reportes recibidos'],
+          ];
+          $('[data-cifras]', raiz).innerHTML = String(html`
+            <p class="nota">Periodo: ${r.inicio} a ${r.fin} · agrupado por ${r.agrupado === 'mes' ? 'mes' : 'día'}</p>
+            <div class="cifras cifras--kpi">${kpi.map(([c, n, t]) => html`<article class="cifra cifra--${c}"><span class="cifra__numero">${n}</span><span class="cifra__texto">${t}</span></article>`)}</div>
+            ${graficaSerie(r.serie)}
+            ${apilada(r.solicitudes_por_estado)}
+            <div class="dos-columnas">
+              ${barras(r.top_refugios, 'Refugios con más adopciones', ' adopciones')}
+              ${barras(r.refugios_por_alcaldia, 'Refugios activos por alcaldía', ' refugios')}
+            </div>
+            ${barras(r.por_tamano.map((x) => ({ nombre: x.nombre, n: x.adoptados })), 'Adopciones por tamaño (periodo)', ' adopciones')}
+            ${barras(r.por_tamano.map((x) => ({ nombre: x.nombre, n: x.disponibles })), 'Perros disponibles hoy por tamaño', ' disponibles')}`);
+          // Tamaños por CSSOM (la CSP no permite atributos style en línea)
+          $$('[data-ancho]', raiz).forEach((e) => { e.style.width = `${e.dataset.ancho}%`; });
+          $$('[data-crece]', raiz).forEach((e) => { e.style.flexGrow = e.dataset.crece; });
+        });
+        btn.addEventListener('click', async () => {
+          if (!ultimos) return;
+          const err = $('[data-error-csv]', raiz);
+          err.textContent = '';
+          ocupado(btn);
+          try {
+            const res = await fetch(conQuery('/api/admin/estadisticas.csv', ultimos), { credentials: 'same-origin', headers: { 'X-Dopta': '1' } });
+            if (!res.ok) throw new Error();
+            const blob = await res.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `estadisticas_dopta_${hoyCDMX()}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          } catch { err.textContent = 'No se pudo generar el archivo. Intente de nuevo.'; } finally { ocupado(btn, false); }
+        });
+      },
+    };
+  }
+
+  /* ======================= 14. Rutas y navegación ======================= */
+  const RUTAS = [];
+  const ruta = (patron, vista, acceso = null, titulo = '') => RUTAS.push({
+    re: new RegExp(`^${patron.replace(/:(\w+)/g, '(?<$1>\\d{1,10})')}$`), vista, acceso, titulo,
+  });
+  const TODOS = ['adoptante', 'refugio', 'admin', 'funcionario'];
+  ruta('/', vistaCatalogo, null, 'Catálogo');
+  ruta('/animal/:id', vistaAnimal, null, 'Ficha');
+  ruta('/cuestionario', vistaCuestionario, null, 'Cuestionario');
+  ruta('/nosotros', vistaNosotros, null, 'Sobre nosotros');
+  ruta('/refugios', vistaRefugios, null, 'Refugios');
+  ruta('/refugios/:id', vistaPerfilRefugio, null, 'Refugio');
+  ruta('/login', vistaLogin, 'invitado', 'Iniciar sesión');
+  ruta('/registro', vistaRegistro, 'invitado', 'Registro');
+  ruta('/recuperar', vistaRecuperar, 'invitado', 'Recuperar contraseña');
+  ruta('/restablecer', vistaRestablecer, 'invitado', 'Nueva contraseña');
+  ruta('/verificacion-rechazada', vistaRechazada, 'invitado', 'Verificación rechazada');
+  ruta('/solicitudes', vistaMisSolicitudes, ['adoptante'], 'Mis solicitudes');
+  ruta('/solicitar/:id', vistaSolicitar, ['adoptante'], 'Formato de adopción');
+  ruta('/notificaciones', vistaNotificaciones, TODOS, 'Notificaciones');
+  ruta('/cuenta', vistaCuenta, TODOS, 'Mi cuenta');
+  ruta('/refugio', vistaRefugio, ['refugio'], 'Mis animales');
+  ruta('/refugio/animal/nuevo', vistaFormAnimal, ['refugio'], 'Publicar');
+  ruta('/refugio/animal/:id', vistaFormAnimal, ['refugio'], 'Editar');
+  ruta('/refugio/solicitudes', vistaRefugioSolicitudes, ['refugio'], 'Solicitudes');
+  ruta('/refugio/perfil', vistaRefugioPerfil, ['refugio'], 'Perfil');
+  ruta('/refugio/estadisticas', vistaRefugioEstadisticas, ['refugio'], 'Estadísticas');
+  ruta('/admin', vistaAdmin, ['admin', 'funcionario'], 'Administración');
+  ruta('/admin/verificacion', vistaAdminVerificacion, ['admin'], 'Verificación');
+  ruta('/admin/refugios', vistaAdminRefugios, ['admin'], 'Refugios');
+  ruta('/admin/publicaciones', vistaAdminPublicaciones, ['admin'], 'Publicaciones');
+  ruta('/admin/reportes', vistaAdminReportes, ['admin', 'funcionario'], 'Reportes');
+  ruta('/admin/cuentas', vistaAdminCuentas, ['admin'], 'Cuentas');
+  ruta('/admin/catalogos', vistaAdminCatalogos, ['admin'], 'Catálogos');
+  ruta('/admin/estadisticas', vistaAdminEstadisticas, ['admin', 'funcionario'], 'Estadísticas');
+  ruta('/404', vista404, null, 'No encontrada');
+  ruta('/500', vista500, null, 'Error');
+  const R404 = { vista: vista404, acceso: null, titulo: 'No encontrada' };
+
+  function resolver() {
+    const h = location.hash || '#/';
+    if (!h.startsWith('#/')) { history.replaceState(null, '', '#/'); return resolver(); }
+    const [p, qs = ''] = h.slice(1).split('?');
+    const camino = p.replace(/\/+$/, '') || '/';
+    for (const r of RUTAS) {
+      const m = camino.match(r.re);
+      if (m) return { r, params: m.groups || {}, query: new URLSearchParams(qs), camino, hash: h };
+    }
+    return { r: R404, params: {}, query: new URLSearchParams(), camino, hash: h };
+  }
+
+  function rutaPermitida(destino, usuario) {
+    const camino = destino.slice(1).split('?')[0].replace(/\/+$/, '') || '/';
+    const r = RUTAS.find((x) => x.re.test(camino));
+    if (!r) return false;
+    if (r.acceso === 'invitado') return !usuario;
+    if (Array.isArray(r.acceso)) return !!usuario && r.acceso.includes(usuario.tipo);
+    return true;
+  }
+
+  let generacion = 0;
+  let caminoAnterior = null;
+  async function navegar() {
+    const g = ++generacion;
+    const m = resolver();
+    const u = estado.usuario;
+    // Guardas de acceso: redirigen según la sesión y el rol
+    if (m.r.acceso === 'invitado' && u) { location.replace(estado.panel); return; }
+    if (Array.isArray(m.r.acceso)) {
+      if (!u) {
+        estado.flash = estado.flash || { tipo: 'info', texto: 'Inicie sesión para continuar.' };
+        location.replace(`#/login?next=${encodeURIComponent(m.hash)}`);
+        return;
+      }
+      if (!m.r.acceso.includes(u.tipo)) { aviso('No tiene permiso para ver esa página.', 'error'); location.replace(estado.panel); return; }
+    }
+    pintarNav(m.camino);
+    document.title = `${m.r.titulo ? `${m.r.titulo} · ` : ''}Dopta`;
+    let res;
+    try {
+      res = await m.r.vista(m);
+    } catch (e) {
+      if (g !== generacion) return;
+      if (e instanceof ErrorApi && e.status === 401) return;
+      if (e instanceof ErrorApi && e.status === 403) { aviso(e.message || 'No tiene permiso para ver esa página.', 'error'); location.replace(estado.panel); return; }
+      console.error(e);
+      if (e instanceof ErrorApi && e.datos && e.datos.codigo === 'BD') res = vista500(e.message, 'BASE DE DATOS NO DISPONIBLE');
+      else if (e instanceof ErrorApi && e.status === 404) res = vista404();
+      else if (e instanceof ErrorApi && e.status === 0) res = vista500('No hay conexión con el servidor. Revisa que esté encendido (npm start) y vuelve a intentar.', 'SIN CONEXIÓN');
+      else if (e instanceof ErrorApi) res = vista500(e.message || undefined);
+      else res = vista500('La página encontró un problema. Recarga con Ctrl + F5; si sigue, abre la consola (F12) y comparte el mensaje en rojo.', 'ERROR EN LA PÁGINA');
+    }
+    if (g !== generacion || res === '') return;
+    const vistaHtml = res instanceof Seguro ? res : res.html;
+    // Contenedor nuevo en cada vista: así no se acumulan escuchadores de vistas anteriores
+    const limpio = app.cloneNode(false);
+    app.replaceWith(limpio);
+    app = limpio;
+    app.innerHTML = String(vistaHtml);
+    if (m.camino !== caminoAnterior) window.scrollTo({ top: 0 });
+    caminoAnterior = m.camino;
+    const r = $('[data-reintentar]', app);
+    if (r) r.addEventListener('click', navegar);
+    if (res && res.montar) res.montar(app);
+    montarOjitos(app);
+  }
+
+  /* Botón "ojito" para mostrar u ocultar cualquier contraseña */
+  function montarOjitos(raiz) {
+    $$('input[type="password"]', raiz).forEach((inp) => {
+      if (inp.closest('.clave')) return;
+      const caja = document.createElement('span');
+      caja.className = 'clave';
+      inp.replaceWith(caja);
+      caja.append(inp);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clave__ojo';
+      b.setAttribute('aria-label', 'Mostrar contraseña');
+      b.setAttribute('aria-pressed', 'false');
+      b.innerHTML = String(ICONO.ojo);
+      b.addEventListener('click', () => {
+        const ver = inp.type === 'password';
+        inp.type = ver ? 'text' : 'password';
+        b.setAttribute('aria-pressed', String(ver));
+        b.setAttribute('aria-label', ver ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        b.innerHTML = String(ver ? ICONO.ojoCerrado : ICONO.ojo);
+        inp.focus();
+      });
+      caja.append(b);
+    });
+  }
+
+  /* Barra de navegación según el rol */
+  function pintarNav(camino) {
+    const nav = $('#nav');
+    const u = estado.usuario;
+    const actual = (h) => si(`#${camino}` === h || (h !== '#/' && `#${camino}`.startsWith(`${h}/`)), 'aria-current="page"');
+    const campana = html`<a class="boton-pastilla boton-pastilla--icono campana" href="#/notificaciones" aria-label="Notificaciones${estado.noLeidas ? `: ${estado.noLeidas} sin leer` : ''}"${actual('#/notificaciones')}>${ICONO.campana}${estado.noLeidas ? html`<span class="campana__numero">${estado.noLeidas > 99 ? '99+' : estado.noLeidas}</span>` : ''}</a>`;
+    const salir = html`<button class="boton-pastilla" type="button" data-salir>Cerrar sesión</button>`;
+    const pastillaCuenta = u ? html`<a class="boton-pastilla boton-pastilla--cuenta" href="#/cuenta"${actual('#/cuenta')}>${avatar(u, 'mini')}<span>Mi cuenta</span></a>` : '';
+    let enlaces;
+    if (!u) {
+      enlaces = html`
+        <a class="boton-pastilla" href="#/" aria-label="Inicio"${actual('#/')}>${ICONO.casa}</a>
+        <a class="boton-pastilla" href="#/refugios"${actual('#/refugios')}>Refugios</a>
+        <a class="boton-pastilla" href="#/nosotros"${actual('#/nosotros')}>Sobre nosotros</a>
+        <a class="boton-pastilla" href="#/registro"${actual('#/registro')}>Registrarse</a>
+        <a class="boton-pastilla" href="#/login"${actual('#/login')}>Iniciar sesión</a>`;
+    } else if (u.tipo === 'adoptante') {
+      enlaces = html`
+        <a class="boton-pastilla" href="#/" aria-label="Catálogo"${actual('#/')}>${ICONO.casa}</a>
+        <a class="boton-pastilla" href="#/refugios"${actual('#/refugios')}>Refugios</a>
+        <a class="boton-pastilla" href="#/solicitudes"${actual('#/solicitudes')}>Mis solicitudes</a>
+        ${pastillaCuenta}
+        ${campana}${salir}`;
+    } else if (u.tipo === 'refugio') {
+      enlaces = html`
+        <a class="boton-pastilla" href="#/refugio"${si(camino === '/refugio' || camino.startsWith('/refugio/'), 'aria-current="page"')}>Mi refugio</a>
+        <a class="boton-pastilla" href="#/" aria-label="Catálogo público"${actual('#/')}>${ICONO.casa}</a>
+        ${pastillaCuenta}
+        ${campana}${salir}`;
+    } else {
+      enlaces = html`
+        <a class="boton-pastilla" href="#/admin"${si(camino.startsWith('/admin'), 'aria-current="page"')}>${u.tipo === 'admin' ? 'Administración' : 'Panel'}</a>
+        <a class="boton-pastilla" href="#/" aria-label="Catálogo público"${actual('#/')}>${ICONO.casa}</a>
+        ${pastillaCuenta}
+        ${campana}${salir}`;
+    }
+    nav.innerHTML = String(enlaces);
+    $('[data-logo]').setAttribute('href', estado.panel);
+    const b = $('[data-salir]', nav);
+    if (b) b.addEventListener('click', cerrarSesion);
+  }
+
+  /* ======================= 15. Sesión e inactividad (RF-06) ======================= */
+  async function actualizarYo(auto = false) {
+    try {
+      const r = await api('/auth/yo', { auto });
+      if (!r.usuario && estado.usuario) { sesionTerminada(r.expirada ? 'Su sesión terminó por inactividad. Inicie sesión de nuevo.' : 'Inicie sesión de nuevo.'); return; }
+      const cambio = (r.noLeidas || 0) !== estado.noLeidas;
+      estado.usuario = r.usuario;
+      estado.panel = r.panel || '#/';
+      estado.noLeidas = r.noLeidas || 0;
+      if (r.expirada) estado.flash = { tipo: 'info', texto: 'Su sesión terminó por inactividad. Inicie sesión de nuevo.' };
+      if (cambio) pintarNav(resolver().camino);
+    } catch { /* sin conexión: se reintenta en el siguiente ciclo */ }
+  }
+
+  function limpiarSesionLocal() {
+    estado.usuario = null;
+    estado.panel = '#/';
+    estado.noLeidas = 0;
+    estado.perfil = null;
+  }
+  function sesionTerminada(mensaje) {
+    limpiarSesionLocal();
+    estado.flash = { tipo: 'info', texto: mensaje || 'Su sesión terminó por inactividad. Inicie sesión de nuevo.' };
+    if (location.hash.startsWith('#/login')) navegar(); else location.hash = '#/login';
+  }
+  async function cerrarSesion() {
+    const ok = await dialogo({
+      titulo: '¿Quieres cerrar sesión?',
+      texto: 'Tendrás que volver a escribir tu correo y contraseña para entrar.',
+      confirmar: 'Cerrar sesión',
+      cancelar: 'Seguir aquí',
+    });
+    if (!ok) return;
+    try { await api('/auth/logout', { metodo: 'POST' }); } catch { /* se limpia igual */ }
+    limpiarSesionLocal();
+    aviso('Sesión cerrada.');
+    if ((location.hash || '#/') === '#/') navegar(); else location.hash = '#/';
+  }
+
+  const INACTIVIDAD = 30 * 60 * 1000;
+  let ultimaInteraccion = Date.now();
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => window.addEventListener(ev, () => { ultimaInteraccion = Date.now(); }, { passive: true }));
+  function vigilarInactividad() {
+    setInterval(async () => {
+      if (!estado.usuario) return;
+      const t = Date.now();
+      if (t - ultimaInteraccion >= INACTIVIDAD) {
+        await api('/auth/logout', { metodo: 'POST' }).catch(() => {});
+        sesionTerminada('Su sesión terminó por inactividad. Inicie sesión de nuevo.');
+        return;
+      }
+      // Si el usuario sigue activo pero no ha hecho peticiones, se mantiene viva la sesión en el servidor
+      if (t - ultimaInteraccion < 5 * 60 * 1000 && t - ultimaServidor > 5 * 60 * 1000) actualizarYo(false);
+    }, 30000);
+    setInterval(() => { if (estado.usuario && !document.hidden) actualizarYo(true); }, 60000);
+  }
+
+  /* ======================= 16. Efectos visuales ======================= */
+  function actualizarBotonTema() {
+    const boton = $('[data-tema-boton]');
+    if (!boton) return;
+    const oscuro = raizDoc.getAttribute('data-theme') === 'oscuro';
+    const t = oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+    boton.setAttribute('aria-label', t);
+    boton.setAttribute('title', t);
+    boton.setAttribute('aria-pressed', String(oscuro));
+  }
+  function montarTema() {
+    const boton = $('[data-tema-boton]');
+    if (!boton) return;
+    boton.addEventListener('click', () => {
+      const sig = raizDoc.getAttribute('data-theme') === 'oscuro' ? 'claro' : 'oscuro';
+      aplicarTema(sig);
+      guardarLS(CLAVE_TEMA, sig);
+      actualizarBotonTema();
+      const sel = $('[data-tema]');
+      if (sel) sel.value = sig;
+    });
+    actualizarBotonTema();
+  }
+
+  const reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* Pantalla de carga inicial */
+  function pantallaCarga() {
+    if (reducirMovimiento) return () => {};
+    const inicio = performance.now();
+    const p = document.createElement('div');
+    p.className = 'cargando';
+    p.setAttribute('role', 'status');
+    p.innerHTML = '<img src="img/cargando.svg" alt="Cargando la página"><p>CARGANDO...</p>';
+    document.body.appendChild(p);
+    return () => setTimeout(() => { p.classList.add('cargando--oculto'); setTimeout(() => p.remove(), 500); }, Math.max(0, 900 - (performance.now() - inicio)));
+  }
+
+  /* Rebote tipo croqueta al llegar con fuerza al fondo del catálogo */
+  function croquetas() {
+    if (reducirMovimiento) return;
+    const ZONA = 100;
+    const RUEDA = 100;
+    let acumulado = 0;
+    let relojRueda;
+    let reloj;
+    let ultimaY = window.scrollY;
+    const azar = (a, b) => a + Math.random() * (b - a);
+    const enFondo = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - ZONA;
+    const golpear = () => {
+      if (!$('.catalogo', app) || !$('.croquetas', app) || document.body.classList.contains('impacto')) return;
+      acumulado = 0;
+      $$('.croqueta-pieza', app).forEach((h) => {
+        const lado = Math.random() < 0.5 ? -1 : 1;
+        h.style.setProperty('--x', `${(lado * azar(40, 240)).toFixed(0)}px`);
+        h.style.setProperty('--y', `${-azar(90, 320).toFixed(0)}px`);
+        h.style.setProperty('--r', `${azar(-200, 200).toFixed(0)}deg`);
+        h.style.setProperty('--d', `${azar(0.9, 1.5).toFixed(2)}s`);
+        h.style.setProperty('--retraso', `${azar(0, 180).toFixed(0)}ms`);
+      });
+      document.body.classList.add('impacto');
+      clearTimeout(reloj);
+      reloj = setTimeout(() => document.body.classList.remove('impacto'), 1800);
+    };
+    window.addEventListener('scroll', () => {
+      const d = window.scrollY - ultimaY;
+      ultimaY = window.scrollY;
+      if (d > 0 && enFondo()) golpear();
+    }, { passive: true });
+    window.addEventListener('wheel', (e) => {
+      if (e.deltaY <= 0 || !enFondo()) return;
+      acumulado += e.deltaY;
+      clearTimeout(relojRueda);
+      relojRueda = setTimeout(() => { acumulado = 0; }, 250);
+      if (acumulado >= RUEDA) golpear();
+    }, { passive: true });
+  }
+
+  /* ======================= 17. Inicio ======================= */
+  document.addEventListener('DOMContentLoaded', async () => {
+    app = $('#app');
+    const ocultarCarga = pantallaCarga();
+    montarTema();
+    croquetas();
+    await actualizarYo(true);
+    window.addEventListener('hashchange', navegar);
+    await navegar();
+    ocultarCarga();
+    vigilarInactividad();
+  });
+})();
