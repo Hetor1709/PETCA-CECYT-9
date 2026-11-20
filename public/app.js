@@ -1582,3 +1582,527 @@
     });
     campo.addEventListener('blur', () => setTimeout(cerrar, 150));
   }
+
+  /* Solo dígitos en los campos de teléfono */
+  const soloDigitos = (raiz) => $$('input[type="tel"]', raiz).forEach((t) => t.addEventListener('input', () => { t.value = t.value.replace(/\D/g, '').slice(0, 10); }));
+
+  /* ---------- RF-01 a RF-04: registro ---------- */
+  async function vistaRegistro() {
+    const cat = await catalogos();
+    return {
+      html: tarjetaCuenta('titulo-registro', 'Registro', '', html`
+        <form class="formulario" novalidate data-registro>
+          <fieldset class="campo campo--tipo">
+            <legend class="campo__etiqueta">¿Cómo usarás Dopta?</legend>
+            <div class="pregunta__opciones">
+              <label class="opcion"><input type="radio" name="tipo" value="adoptante" checked><span class="opcion__texto">Quiero adoptar</span></label>
+              <label class="opcion"><input type="radio" name="tipo" value="refugio"><span class="opcion__texto">Soy un refugio</span></label>
+            </div>
+          </fieldset>
+          <div class="campo"><label class="campo__etiqueta" for="nombre" data-etq-nombre>Nombre completo</label>
+            <input class="campo__entrada" id="nombre" name="nombre" type="text" placeholder="Tu nombre completo" autocomplete="name" maxlength="120" required></div>
+          <div class="campo"><label class="campo__etiqueta" for="correo">Email</label>
+            <input class="campo__entrada" id="correo" name="correo" type="email" placeholder="tu@email.com" autocomplete="email" maxlength="254" required></div>
+          <div class="campo" data-solo-adoptante><label class="campo__etiqueta" for="telefono_adoptante">Teléfono celular</label>
+            <input class="campo__entrada" id="telefono_adoptante" name="telefono_adoptante" type="tel" inputmode="numeric" maxlength="10" placeholder="10 dígitos" autocomplete="tel-national" required>
+            <span class="campo__ayuda">Solo lo verá el refugio al que envíes una solicitud, para coordinar tu cita.</span></div>
+          <div class="campo"><label class="campo__etiqueta" for="contrasena">Contraseña</label>
+            <input class="campo__entrada" id="contrasena" name="contrasena" type="password" placeholder="••••••••" autocomplete="new-password" maxlength="64" required>
+            <span class="campo__ayuda">De 8 a 64 caracteres, con al menos una letra y un número.</span></div>
+          <div class="campo"><label class="campo__etiqueta" for="confirmar">Confirmar contraseña</label>
+            <input class="campo__entrada" id="confirmar" name="confirmar" type="password" placeholder="••••••••" autocomplete="new-password" maxlength="64" required></div>
+          <div class="formulario" data-solo-refugio hidden>
+            <p class="seccion-form">Datos institucionales</p>
+            ${camposRefugio(cat)}
+          </div>
+          <label class="campo campo--casilla" data-solo-adoptante data-mayor><input type="checkbox" name="mayor_edad" value="si"><span>Soy mayor de 18 años (requisito legal para adoptar en la CDMX).</span></label>
+          <label class="campo campo--casilla"><input type="checkbox" name="aviso" value="si"><span>Acepto el <button class="enlace" type="button" data-ver-aviso>aviso de privacidad v1.0</button></span></label>
+          <p class="mensaje mensaje--error" data-error role="alert"></p>
+          <button class="boton-contorno" type="submit">Crear cuenta</button>
+        </form>
+        <p class="cuenta__pie">¿Ya tienes cuenta? <a href="#/login">Iniciar Sesión</a></p>`, true),
+      montar(raiz) {
+        const f = $('[data-registro]', raiz);
+        const bloque = $('[data-solo-refugio]', f);
+        const etq = $('[data-etq-nombre]', f);
+        montarHorario(f);
+        soloDigitos(f);
+        montarDireccion(f);
+        f.addEventListener('change', (e) => {
+          if (e.target.name !== 'tipo') return;
+          const ref = e.target.value === 'refugio';
+          bloque.hidden = !ref;
+          $$('[data-solo-adoptante]', f).forEach((x) => { x.hidden = ref; });
+          etq.textContent = ref ? 'Nombre del refugio' : 'Nombre completo';
+          f.nombre.placeholder = ref ? 'Ej. Refugio Patitas' : 'Tu nombre completo';
+        });
+        $('[data-ver-aviso]', f).addEventListener('click', () => dialogo({ titulo: 'Aviso de privacidad', cuerpo: AVISO_PRIVACIDAD, confirmar: 'Entendido', cancelar: '' }));
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          errorEn(f, '');
+          const d = datosForm(f);
+          const pass = f.contrasena.value;
+          const tipo = d.tipo === 'refugio' ? 'refugio' : 'adoptante';
+          let datos;
+          try {
+            if (!d.nombre || !d.correo || !pass) fallo(M.vacios);
+            if (tipo === 'adoptante' && !V.nombre(d.nombre.replace(/\s+/g, ' '))) fallo(M.nombre);
+            if (tipo === 'refugio' && !V.entre(d.nombre, 3, 120)) fallo(M.refugio);
+            if (tipo === 'refugio' && !V.letras(d.nombre)) fallo(M.letras);
+            revisarNombre(d.nombre, tipo === 'refugio' ? 'refugio' : 'persona');
+            if (!V.correo(d.correo)) fallo(M.correo);
+            revisarCorreo(d.correo);
+            if (!V.contrasena(pass)) fallo(M.contrasena);
+            if (pass !== f.confirmar.value) fallo(M.coinciden);
+            datos = { tipo, nombre: d.nombre, correo: d.correo, contrasena: pass, confirmar: f.confirmar.value, aviso: f.aviso.checked };
+            if (tipo === 'adoptante') {
+              if (!V.telefono(d.telefono_adoptante)) fallo(M.telefono);
+              if (!V.telefonoReal(d.telefono_adoptante)) fallo(M.telefonoReal);
+              datos.telefono = d.telefono_adoptante;
+              if (!f.mayor_edad.checked) fallo('Para adoptar debes ser mayor de 18 años. Confirma la casilla.');
+              datos.mayor_edad = true;
+            }
+            if (tipo === 'refugio') Object.assign(datos, validarCamposRefugio(f, cat));
+            if (!f.aviso.checked) fallo(M.aviso);
+          } catch (err) { return errorEn(f, err.message); }
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/auth/registro', { metodo: 'POST', datos });
+            estado.flash = { tipo: 'exito', texto: r.mensaje === 'Cuenta creada' ? 'Cuenta creada. Ya puedes iniciar sesión.' : r.mensaje };
+            location.hash = '#/login';
+          } catch (err) {
+            ocupado(b, false);
+            errorEn(f, textoError(err, 'No se pudo completar el registro. Intente de nuevo en unos minutos.'));
+          }
+        });
+      },
+    };
+  }
+
+  /* ---------- RF-25: verificación rechazada, el refugio reenvía todos sus datos ---------- */
+  async function vistaRechazada() {
+    const cat = await catalogos();
+    return {
+      html: tarjetaCuenta('titulo-rechazada', 'Verificación rechazada', 'Su cuenta no fue verificada. Vuelva a enviar su solicitud de validación.', html`
+        <form class="formulario" novalidate data-revalidar>
+          <div class="campo"><label class="campo__etiqueta" for="correo">Email de la cuenta</label>
+            <input class="campo__entrada" id="correo" name="correo" type="email" value="${estado.rechazado || ''}" maxlength="254" required></div>
+          <div class="campo"><label class="campo__etiqueta" for="contrasena">Contraseña</label>
+            <input class="campo__entrada" id="contrasena" name="contrasena" type="password" autocomplete="current-password" maxlength="64" required></div>
+          <div class="campo"><label class="campo__etiqueta" for="nombre">Nombre del refugio</label>
+            <input class="campo__entrada" id="nombre" name="nombre" type="text" maxlength="120" required></div>
+          ${camposRefugio(cat)}
+          <p class="mensaje mensaje--error" data-error role="alert"></p>
+          <button class="boton-contorno" type="submit">Enviar solicitud de validación</button>
+        </form>`, true),
+      montar(raiz) {
+        const f = $('[data-revalidar]', raiz);
+        montarHorario(f);
+        soloDigitos(f);
+        montarDireccion(f);
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          let datos;
+          try {
+            const d = datosForm(f);
+            if (!V.correo(d.correo)) fallo(M.correo);
+            if (!V.entre(d.nombre, 3, 120)) fallo(M.refugio);
+            if (!V.letras(d.nombre)) fallo(M.letras);
+            revisarNombre(d.nombre, 'refugio');
+            datos = { correo: d.correo, contrasena: f.contrasena.value, nombre: d.nombre, ...validarCamposRefugio(f, cat) };
+          } catch (err) { return errorEn(f, err.message); }
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/auth/revalidar', { metodo: 'POST', datos });
+            estado.rechazado = null;
+            estado.flash = { tipo: 'exito', texto: r.mensaje };
+            location.hash = '#/login';
+          } catch (err) { ocupado(b, false); errorEn(f, textoError(err)); }
+        });
+      },
+    };
+  }
+
+  /* ---------- RF-08: recuperar contraseña ---------- */
+  function vistaRecuperar() {
+    return {
+      html: tarjetaCuenta('titulo-recuperar', 'Recuperar contraseña', 'Te enviaremos un enlace de un solo uso, válido por 30 minutos.', html`
+        <form class="formulario" novalidate data-recuperar>
+          <div class="campo"><label class="campo__etiqueta" for="correo">Email de tu cuenta</label>
+            <input class="campo__entrada" id="correo" name="correo" type="email" placeholder="tu@email.com" autocomplete="email" maxlength="254" required></div>
+          <p class="mensaje mensaje--error" data-error role="alert"></p>
+          <p class="mensaje mensaje--exito" data-ok role="status"></p>
+          <button class="boton-contorno" type="submit">Enviar enlace</button>
+        </form>
+        <p class="cuenta__pie"><a href="#/login">Volver a iniciar sesión</a></p>`),
+      montar(raiz) {
+        const f = $('[data-recuperar]', raiz);
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          errorEn(f, '');
+          $('[data-ok]', f).textContent = '';
+          const correo = f.correo.value.trim();
+          if (!V.correo(correo)) return errorEn(f, M.correo);
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/auth/recuperar', { metodo: 'POST', datos: { correo } });
+            $('[data-ok]', f).textContent = r.mensaje;
+          } catch (err) { errorEn(f, textoError(err)); } finally { ocupado(b, false); }
+        });
+      },
+    };
+  }
+
+  async function vistaRestablecer(ctx) {
+    const token = ctx.query.get('token') || '';
+    let problema = '';
+    try { await api('/auth/recuperar/verificar', { metodo: 'POST', datos: { token } }); } catch (e) { problema = textoError(e); }
+    if (problema) {
+      return tarjetaCuenta('titulo-rest', 'Restablecer contraseña', '', html`
+        <p class="mensaje mensaje--error" role="alert">${problema}</p>
+        <p class="cuenta__pie"><a href="#/recuperar">Solicitar un enlace nuevo</a></p>`);
+    }
+    return {
+      html: tarjetaCuenta('titulo-rest', 'Nueva contraseña', 'Elige una contraseña que no uses en otros sitios.', html`
+        <form class="formulario" novalidate data-rest>
+          <div class="campo"><label class="campo__etiqueta" for="nueva">Nueva contraseña</label>
+            <input class="campo__entrada" id="nueva" name="nueva" type="password" autocomplete="new-password" maxlength="64" required>
+            <span class="campo__ayuda">De 8 a 64 caracteres, con al menos una letra y un número.</span></div>
+          <div class="campo"><label class="campo__etiqueta" for="confirmar">Confirmar contraseña</label>
+            <input class="campo__entrada" id="confirmar" name="confirmar" type="password" autocomplete="new-password" maxlength="64" required></div>
+          <p class="mensaje mensaje--error" data-error role="alert"></p>
+          <button class="boton-contorno" type="submit">Guardar contraseña</button>
+        </form>`),
+      montar(raiz) {
+        const f = $('[data-rest]', raiz);
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (!V.contrasena(f.nueva.value)) return errorEn(f, M.contrasena);
+          if (f.nueva.value !== f.confirmar.value) return errorEn(f, M.coinciden);
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/auth/restablecer', { metodo: 'POST', datos: { token, contrasena: f.nueva.value } });
+            history.replaceState(null, '', '#/login'); // quita el token de la barra de direcciones
+            estado.flash = { tipo: 'exito', texto: r.mensaje };
+            navegar();
+          } catch (err) { ocupado(b, false); errorEn(f, textoError(err)); }
+        });
+      },
+    };
+  }
+
+  /* ---------- RF-07, RF-09, RF-10: mi cuenta ---------- */
+  /* Silueta del usuario con sus iniciales y color propio (cambia según el tipo de cuenta) */
+  function siluetaUsuario(nombre, tipo, grande = false) {
+    const ini = String(nombre || '?').trim().split(/\s+/).filter((p) => /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(p)).slice(0, 2).map((p) => p[0].toUpperCase()).join('') || '?';
+    let tono = 0;
+    for (const ch of String(nombre)) tono = (tono * 31 + ch.codePointAt(0)) % 997;
+    const forma = tipo === 'refugio'
+      ? '<path d="M14 54h36M18 54V30l14-10 14 10v24" stroke-width="3.2" fill="none"/><path d="M27 54v-9a5 5 0 0 1 10 0v9" stroke-width="3.2" fill="none"/>'
+      : tipo === 'admin' || tipo === 'funcionario'
+        ? '<path d="M32 12l17 6v11c0 11-7.5 19-17 23-9.5-4-17-12-17-23V18z" stroke-width="3.2" fill="none"/>'
+        : '<circle cx="32" cy="25" r="10" stroke-width="3.2" fill="none"/><path d="M14 54c2-10 9.5-15 18-15s16 5 18 15" stroke-width="3.2" fill="none"/>';
+    return html`<span class="silueta silueta--t${tono % 8}${grande ? ' silueta--grande' : ''}" aria-hidden="true">
+      ${seguro(`<svg viewBox="0 0 64 64" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${forma}</svg>`)}
+      <span class="silueta__iniciales">${ini}</span></span>`;
+  }
+  /* Foto de perfil o, si no hay, la silueta con iniciales */
+  const avatar = (u, tam = 'grande') => (u && Number(u.avatar_v) > 0
+    ? html`<img class="avatar avatar--${tam}" src="/api/avatar/${u.id}?v=${u.avatar_v}" alt="" width="${tam === 'mini' ? 28 : tam === 'chico' ? 40 : 104}" height="${tam === 'mini' ? 28 : tam === 'chico' ? 40 : 104}" loading="lazy">`
+    : tam === 'mini' ? html`<span class="avatar avatar--mini avatar--vacio" aria-hidden="true">${String(u && u.nombre || '?').trim()[0].toUpperCase()}</span>`
+      : siluetaUsuario(u && u.nombre, u && u.tipo, tam === 'grande'));
+
+  /* Recorta al centro en cuadrado de 256 px y comprime en WebP (o JPEG) para no pasar de 300 KB */
+  async function prepararAvatar(file) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) fallo('La foto debe ser PNG, JPG o WebP.');
+    if (file.size > 15 * 1024 * 1024) fallo('La foto es demasiado pesada (máximo 15 MB).');
+    let img;
+    try { img = await createImageBitmap(file); } catch { fallo('No se pudo leer la imagen. Prueba con otra.'); }
+    const lado = Math.min(img.width, img.height);
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    c.getContext('2d').drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 256, 256);
+    img.close();
+    for (const [tipo, q] of [['image/webp', 0.85], ['image/webp', 0.7], ['image/jpeg', 0.8]]) {
+      const b = await new Promise((ok) => c.toBlob(ok, tipo, q));
+      if (b && b.type === tipo && b.size <= 300 * 1024) return b;
+    }
+    return fallo('No se pudo comprimir la foto. Prueba con otra imagen.');
+  }
+
+  const tarjetaPerfil = (c) => html`
+    <section class="panel perfil-tarjeta">
+      <div class="perfil-tarjeta__foto">
+        <span data-avatar>${avatar(c)}</span>
+        <label class="boton-foto" title="Cambiar foto de perfil"><input type="file" accept="image/png,image/jpeg,image/webp" data-subir-avatar hidden><span aria-hidden="true">📷</span><span class="sr-only">Cambiar foto de perfil</span></label>
+      </div>
+      <div class="perfil-tarjeta__datos">
+        <p class="perfil-tarjeta__nombre">${c.nombre}</p>
+        <p class="perfil-tarjeta__rol">${{ adoptante: 'Adoptante', refugio: 'Refugio', admin: 'Administrador', funcionario: 'Funcionario' }[c.tipo]}${c.refugio ? ` · ${c.refugio.institucion}` : ''}</p>
+        <p class="perfil-tarjeta__meta">${c.correo}${c.telefono ? ` · Tel. ${c.telefono}` : ''} · Miembro desde ${new Intl.DateTimeFormat('es-MX', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${String(c.creado).slice(0, 10)}T12:00:00Z`))}</p>
+        <p class="acciones acciones--compactas">
+          <button class="enlace" type="button" data-elegir-avatar>${Number(c.avatar_v) ? 'Cambiar foto' : 'Agregar foto de perfil'}</button>
+          ${Number(c.avatar_v) ? html`· <button class="enlace" type="button" data-quitar-avatar>Quitar foto</button>` : ''}
+        </p>
+      </div>
+    </section>`;
+
+  function montarAvatar(raiz, c) {
+    const input = $('[data-subir-avatar]', raiz);
+    if (!input) return;
+    const refrescar = (v) => {
+      c.avatar_v = v;
+      estado.usuario.avatar_v = v;
+      navegar();
+    };
+    $('[data-elegir-avatar]', raiz).addEventListener('click', () => input.click());
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      input.value = '';
+      if (!file) return;
+      try {
+        const blob = await prepararAvatar(file);
+        const r = await api('/cuenta/avatar', { metodo: 'PUT', form: blob });
+        aviso(r.mensaje);
+        refrescar(r.avatar_v);
+      } catch (e) { aviso(e instanceof ErrorApi ? textoError(e) : e.message, 'error'); }
+    });
+    const q = $('[data-quitar-avatar]', raiz);
+    if (q) {
+      q.addEventListener('click', async () => {
+        const ok = await dialogo({ titulo: '¿Quitar tu foto de perfil?', texto: 'Se mostrará tu silueta con tus iniciales.', confirmar: 'Quitar foto', peligro: true });
+        if (!ok) return;
+        try { const r = await api('/cuenta/avatar', { metodo: 'DELETE' }); aviso(r.mensaje); refrescar(0); } catch (e) { aviso(textoError(e), 'error'); }
+      });
+    }
+  }
+
+  async function vistaCuenta() {
+    const c = await api('/cuenta');
+    const u = estado.usuario;
+    const tema = raizDoc.getAttribute('data-theme') === 'oscuro' ? 'oscuro' : 'claro';
+    return {
+      html: html`
+      <section class="principal principal--cuenta">
+        <div class="contenedor contenedor--estrecho formulario">
+          <h1 class="titulo-pagina">Mi cuenta</h1>
+          ${tarjetaPerfil(c)}
+          ${c.cambio_pendiente ? html`<p class="mensaje mensaje--aviso">Tienes un cambio de datos esperando la aprobación del Administrador (enviado el ${c.cambio_pendiente.creado_en}). Mientras, se muestran tus datos actuales.</p>` : ''}
+          ${!['admin', 'funcionario'].includes(u.tipo) ? html`
+          <section class="panel">
+            <h2 class="panel__titulo">Datos de la cuenta</h2>
+            <form class="formulario" novalidate data-nombre>
+              <div class="campo"><label class="campo__etiqueta" for="nombre">${u.tipo === 'refugio' ? 'Nombre del refugio' : 'Nombre completo'}</label>
+                <input class="campo__entrada" id="nombre" name="nombre" type="text" maxlength="120" value="${c.nombre}" required></div>
+              ${u.tipo === 'refugio' ? html`<div class="campo"><label class="campo__etiqueta" for="institucion">Nombre de la institución</label>
+                <input class="campo__entrada" id="institucion" name="institucion" type="text" maxlength="120" value="${c.refugio ? c.refugio.institucion : ''}" required></div>` : ''}
+              <div class="campo"><span class="campo__etiqueta">Correo</span><p class="dato__valor">${c.correo}</p></div>
+              ${u.tipo === 'refugio' ? html`<p class="campo__ayuda">Por seguridad, el cambio de nombre o institución lo aprueba el Administrador antes de publicarse.</p>` : ''}
+              <p class="mensaje mensaje--error" data-error role="alert"></p>
+              <button class="boton-contorno" type="submit">${u.tipo === 'refugio' ? 'Enviar cambio a revisión' : 'Guardar cambios'}</button>
+            </form>
+            ${u.tipo === 'adoptante' ? html`
+            <form class="formulario formulario--linea" novalidate data-telefono>
+              <div class="campo"><label class="campo__etiqueta" for="tel">Teléfono celular</label>
+                <input class="campo__entrada" id="tel" name="telefono" type="tel" inputmode="numeric" maxlength="10" value="${c.telefono || ''}" placeholder="10 dígitos" required>
+                <span class="campo__ayuda">${c.telefono ? 'Solo lo ven los refugios a los que envías una solicitud.' : 'Agrégalo: los refugios lo necesitan para coordinar tu cita.'}</span></div>
+              <p class="mensaje mensaje--error" data-error role="alert"></p>
+              <button class="boton-contorno" type="submit">Guardar teléfono</button>
+            </form>` : ''}
+            ${u.tipo === 'refugio' ? html`<p class="cuenta__pie"><a href="#/refugio/perfil">Editar teléfono, dirección y horario</a></p>` : ''}
+          </section>` : ''}
+          <section class="panel">
+            <h2 class="panel__titulo">Cambiar contraseña</h2>
+            <form class="formulario" novalidate data-pass>
+              <div class="campo"><label class="campo__etiqueta" for="actual">Contraseña actual</label>
+                <input class="campo__entrada" id="actual" name="actual" type="password" autocomplete="current-password" maxlength="64" required></div>
+              <div class="campo"><label class="campo__etiqueta" for="nueva">Nueva contraseña</label>
+                <input class="campo__entrada" id="nueva" name="nueva" type="password" autocomplete="new-password" maxlength="64" required>
+                <span class="campo__ayuda">De 8 a 64 caracteres, con al menos una letra y un número, y distinta a la actual.</span></div>
+              <p class="mensaje mensaje--error" data-error role="alert"></p>
+              <button class="boton-contorno" type="submit">Guardar cambios</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2 class="panel__titulo">Ajustes</h2>
+            <div class="ajustes__fila">
+              <label class="ajustes__etiqueta" for="tema">Tema</label>
+              <select class="ajustes__select" id="tema" data-tema><option value="claro"${si(tema === 'claro', 'selected')}>Claro</option><option value="oscuro"${si(tema === 'oscuro', 'selected')}>Oscuro</option></select>
+            </div>
+            <div class="ajustes__fila"><span class="ajustes__etiqueta">Aviso de privacidad aceptado</span><span>${c.aviso_version} · cuenta creada el ${String(c.creado).slice(0, 10)}</span></div>
+          </section>
+          ${!['admin', 'funcionario'].includes(u.tipo) ? html`
+          <section class="panel">
+            <h2 class="panel__titulo">Dar de baja la cuenta</h2>
+            <p>Tu cuenta dejará de funcionar de inmediato y tus datos personales se eliminarán después de 30 días.</p>
+            <div class="panel__acciones"><button class="boton-contorno boton-contorno--peligro" type="button" data-baja>Dar de baja cuenta</button></div>
+          </section>` : ''}
+        </div>
+      </section>`,
+      montar(raiz) {
+        const fn = $('[data-nombre]', raiz);
+        if (fn) {
+          fn.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const d = datosForm(fn);
+            const msg = 'El nombre debe tener de 2 a 100 caracteres, o de 3 a 120 caracteres para una institución.';
+            if (u.tipo === 'adoptante' && !V.nombre(d.nombre)) return errorEn(fn, msg);
+            if (u.tipo === 'refugio' && (!V.entre(d.nombre, 3, 120) || !V.entre(d.institucion, 3, 120))) return errorEn(fn, msg);
+            const prob = u.tipo === 'refugio'
+              ? problemaNombre(d.nombre, 'refugio') || problemaNombre(d.institucion, 'refugio')
+              : problemaNombre(d.nombre, 'persona');
+            if (prob) return errorEn(fn, prob);
+            const b = $('button[type="submit"]', fn);
+            ocupado(b);
+            try {
+              const r = await api('/cuenta/nombre', { metodo: 'PUT', datos: d });
+              if (u.tipo !== 'refugio') estado.usuario.nombre = d.nombre;
+              errorEn(fn, '');
+              aviso(r.mensaje);
+              if (r.pendiente !== undefined) navegar();
+            } catch (err) { errorEn(fn, textoError(err)); } finally { ocupado(b, false); }
+          });
+        }
+        const ft = $('[data-telefono]', raiz);
+        if (ft) {
+          soloDigitos(ft);
+          ft.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const tel = ft.telefono.value.trim();
+            if (!V.telefono(tel)) return errorEn(ft, M.telefono);
+            if (!V.telefonoReal(tel)) return errorEn(ft, M.telefonoReal);
+            const b = $('button[type="submit"]', ft);
+            ocupado(b);
+            try { aviso((await api('/cuenta/telefono', { metodo: 'PUT', datos: { telefono: tel } })).mensaje); errorEn(ft, ''); }
+            catch (err) { errorEn(ft, textoError(err)); } finally { ocupado(b, false); }
+          });
+        }
+        const fp = $('[data-pass]', raiz);
+        fp.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (!V.contrasena(fp.nueva.value)) return errorEn(fp, M.contrasena);
+          if (fp.nueva.value === fp.actual.value) return errorEn(fp, 'La nueva contraseña debe ser distinta a la actual.');
+          const b = $('button[type="submit"]', fp);
+          ocupado(b);
+          try {
+            const r = await api('/cuenta/contrasena', { metodo: 'PUT', datos: { actual: fp.actual.value, nueva: fp.nueva.value } });
+            fp.reset();
+            errorEn(fp, '');
+            aviso(r.mensaje);
+          } catch (err) { errorEn(fp, textoError(err)); } finally { ocupado(b, false); }
+        });
+        montarAvatar(raiz, c);
+        $('[data-tema]', raiz).addEventListener('change', (e) => { aplicarTema(e.target.value); guardarLS(CLAVE_TEMA, e.target.value); actualizarBotonTema(); });
+        const bb = $('[data-baja]', raiz);
+        if (bb) {
+          bb.addEventListener('click', async () => {
+            const ok = await dialogo({
+              titulo: '¿Dar de baja tu cuenta?',
+              texto: 'Esta acción cierra tu sesión. Confirma con tu contraseña actual.',
+              cuerpo: html`<label class="campo"><span class="campo__etiqueta">Contraseña actual</span><input class="campo__entrada" name="contrasena" type="password" autocomplete="current-password" maxlength="64"></label>`,
+              confirmar: 'Dar de baja',
+              peligro: true,
+              accion: (f) => api('/cuenta/baja', { metodo: 'POST', datos: { contrasena: f.contrasena.value } }),
+            });
+            if (ok) { limpiarSesionLocal(); aviso('Tu cuenta fue dada de baja.'); location.hash = '#/'; }
+          });
+        }
+      },
+    };
+  }
+
+  /* ---------- RF-24: notificaciones ---------- */
+  async function vistaNotificaciones() {
+    let lista;
+    try { lista = await api('/notificaciones'); } catch (e) { lista = null; }
+    return {
+      html: html`
+      <section class="principal">
+        <div class="contenedor contenedor--estrecho">
+          <h1 class="titulo-pagina">Notificaciones</h1>
+          ${lista === null ? html`<p class="mensaje mensaje--error">No se pudo cargar la lista. Intente de nuevo.</p>`
+    : !lista.length ? html`<div class="vacio">${seguro(SVG_HUELLA)}No tienes notificaciones.</div>`
+      : html`
+            <div class="acciones acciones--fin"><button class="boton-contorno boton-contorno--chico" type="button" data-todas${si(!lista.some((n) => !n.leida), 'disabled')}>Marcar todas como leídas</button></div>
+            <ul class="filas">${lista.map((n) => html`
+              <li class="fila fila--sin-imagen ${n.leida ? '' : 'fila--no-leida'} ${n.enlace && rutaPermitida(n.enlace, estado.usuario) ? 'fila--enlace' : ''}" data-id="${n.id}" data-enlace="${n.enlace && rutaPermitida(n.enlace, estado.usuario) ? n.enlace : ''}" tabindex="0" role="${n.enlace ? 'link' : 'button'}">
+                <div><p class="fila__titulo">${n.texto}</p><p class="fila__meta">${String(n.creada_en).slice(0, 16)}${n.enlace ? ' · Toca para abrir' : ''}</p></div>
+                <div class="fila__lado">${n.leida ? insignia('', 'Leída') : insignia('pendiente', 'No leída')}</div>
+              </li>`)}</ul>`}
+        </div>
+      </section>`,
+      montar(raiz) {
+        // Al tocarla se marca como leída y, si menciona algo (una solicitud, una ficha), lleva a ese módulo
+        const marcar = async (li) => {
+          if (li.classList.contains('fila--no-leida')) {
+            li.classList.remove('fila--no-leida');
+            $('.fila__lado', li).innerHTML = String(insignia('', 'Leída'));
+            await api(`/notificaciones/${li.dataset.id}/leida`, { metodo: 'POST' }).catch(() => {});
+            actualizarYo();
+          }
+          if (li.dataset.enlace) location.hash = li.dataset.enlace;
+        };
+        $$('.fila', raiz).forEach((li) => {
+          li.addEventListener('click', () => marcar(li));
+          li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); marcar(li); } });
+        });
+        const t = $('[data-todas]', raiz);
+        if (t) t.addEventListener('click', async () => { await api('/notificaciones/leidas', { metodo: 'POST' }).catch(() => {}); await actualizarYo(); navegar(); });
+      },
+    };
+  }
+
+  /* ---------- RF-17: mis solicitudes ---------- */
+  /* Lo que la persona adoptante envió (formato de adopción): visible para ambos lados */
+  const resumenEnviado = (s, titulo = 'Lo que enviaste al refugio', abierto = false) => (s.resumen ? html`
+    <details class="enviado"${si(abierto, 'open')}><summary>${titulo}</summary>
+      <dl class="enviado__lista">${s.resumen.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>
+    </details>` : '');
+
+  /* Conversación corta dentro de la solicitud */
+  const burbujas = (mensajes) => (mensajes.length
+    ? html`<ol class="chat__lista">${mensajes.map((m) => html`
+        <li class="chat__msg${m.mio ? ' chat__msg--mio' : ''}"><p>${m.texto}</p><span class="chat__hora">${m.mio ? 'Tú' : m.autor_tipo === 'refugio' ? 'Refugio' : 'Adoptante'} · ${m.creado}</span></li>`)}</ol>`
+    : html`<p class="chat__vacio">Aún no hay mensajes.</p>`);
+  const conversacion = (s, abierto = false) => html`
+    <details class="chat" data-chat="${s.id}"${si(abierto || s.sin_leer, 'open')}>
+      <summary>Mensajes${s.mensajes.length ? ` (${s.mensajes.length})` : ''}${s.sin_leer ? html` <span class="chat__nuevos">${s.sin_leer} nuevo${s.sin_leer > 1 ? 's' : ''}</span>` : ''}</summary>
+      <div data-burbujas>${burbujas(s.mensajes)}</div>
+      ${s.puede_escribir ? html`
+      <form class="chat__form" novalidate data-enviar-msg>
+        <label class="sr-only" for="msg-${s.id}">Escribe un mensaje</label>
+        <textarea class="campo__textarea chat__texto" id="msg-${s.id}" name="texto" maxlength="300" rows="2" placeholder="Mensaje corto (máx. 300 caracteres)"></textarea>
+        <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="submit">Enviar</button>
+        <p class="mensaje mensaje--error" data-error role="alert"></p>
+      </form>` : html`<p class="chat__vacio">La conversación está cerrada para esta solicitud.</p>`}
+    </details>`;
+  function montarConversaciones(raiz) {
+    $$('[data-chat]', raiz).forEach((caja) => {
+      const id = caja.dataset.chat;
+      const refrescar = async () => {
+        try { $('[data-burbujas]', caja).innerHTML = String(burbujas(await api(`/solicitudes/${id}/mensajes`))); } catch { /* se queda lo anterior */ }
+        const n = $('.chat__nuevos', caja);
+        if (n) { n.remove(); actualizarYo(); }
+      };
+      caja.addEventListener('toggle', () => { if (caja.open && $('.chat__nuevos', caja)) refrescar(); });
+      const f = $('[data-enviar-msg]', caja);
+      if (!f) return;
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const b = $('button', f);
+        try {
+          const texto = revisarTexto(f.texto.value, { min: 2, max: 300, campo: 'El mensaje', minPalabras: 1, lineas: 4 });
+          ocupado(b);
+          await api(`/solicitudes/${id}/mensajes`, { metodo: 'POST', datos: { texto } });
+          f.reset();
+          errorEn(f, '');
+          await refrescar();
+        } catch (err) { errorEn(f, err instanceof ErrorApi ? textoError(err) : err.message); } finally { ocupado(b, false); }
+      });
+      f.texto.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) f.requestSubmit(); });
+    });
+  }
