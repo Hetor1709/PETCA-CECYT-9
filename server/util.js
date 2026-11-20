@@ -297,3 +297,59 @@ const V = {
     return Number.isInteger(n) && n > 0 && n < 100000 ? n : 1;
   },
 };
+
+/*  Opciones cerradas de salud y temperamento del animal 
+   Cada campo guarda la clave (izquierda) y la app muestra la etiqueta (derecha). */
+const OPCIONES_ANIMAL = {
+  salud_general: { titulo: 'Estado de salud general', opciones: { excelente: 'Excelente', bueno: 'Bueno', regular: 'Regular', recuperacion: 'En recuperación' } },
+  tratamiento: { titulo: '¿Requiere medicamento o trato especial?', opciones: { no: 'No requiere', medicamento: 'Sí, medicamento', dieta: 'Sí, dieta especial', cuidados: 'Sí, cuidados especiales' } },
+  temp_general: { titulo: 'Temperamento general', opciones: { tranquilo: 'Tranquilo', jugueton: 'Juguetón', activo: 'Muy activo', nervioso: 'Nervioso' } },
+  temp_perros: { titulo: 'Con otros perros', opciones: { sociable: 'Sociable', selectivo: 'Selectivo', unico: 'Prefiere ser el único', no_evaluado: 'No evaluado' } },
+  temp_desconocidos: { titulo: 'Con desconocidos', opciones: { amigable: 'Amigable', timido: 'Tímido al inicio', desconfiado: 'Desconfiado', no_evaluado: 'No evaluado' } },
+  temp_comida: { titulo: 'Al comer', opciones: { tranquilo: 'Come tranquilo', rapido: 'Come rápido', protege: 'Protege su comida', no_evaluado: 'No evaluado' } },
+};
+const CAMPOS_ANIMAL = Object.keys(OPCIONES_ANIMAL);
+
+/*  Periodos de estadísticas (RF-35 / RF-36)  */
+function periodo(query) {
+  const t = hoy();
+  if (query.periodo === '7') return { inicio: sumarDias(t, -6), fin: t };
+  if (query.periodo === '30') return { inicio: sumarDias(t, -29), fin: t };
+  const { inicio, fin } = query;
+  if (!esFecha(inicio) || !esFecha(fin)) falla('Ingrese la fecha de inicio y la fecha de fin en formato AAAA-MM-DD.');
+  if (inicio < FECHA_MIN) falla('La fecha de inicio no puede ser anterior al año 2000.');
+  if (inicio > fin) falla('La fecha de inicio debe ser anterior o igual a la fecha de fin.');
+  if (fin > t) falla('La fecha de fin debe ser igual o anterior a hoy.');
+  if (diasEntre(inicio, fin) + 1 > 365) falla('El periodo máximo es de 365 días.');
+  return { inicio, fin };
+}
+
+/*  Notificaciones (RF-24) 
+   enlace: ruta de la app a la que lleva al hacer clic (ej. '#/solicitudes?id=12').
+   Dentro de una transacción se usa un SAVEPOINT: si la notificación falla, no se pierde la operación principal. */
+async function notificar(usuarioId, texto, conn, enlace = null) {
+  const t = [...String(texto)].slice(0, 200).join('');
+  const e = enlace && /^#\/[\w\-/?=&]{0,190}$/.test(enlace) ? enlace : null;
+  const sql = 'INSERT INTO notificaciones (usuario_id, texto, enlace, creada_en) VALUES (?, ?, ?, ?)';
+  for (let intento = 1; intento <= 2; intento += 1) {
+    try {
+      if (conn) await conn.query('SAVEPOINT notif');
+      await q(sql, [usuarioId, t, e, ahora()], conn);
+      if (conn) await conn.query('RELEASE SAVEPOINT notif');
+      return;
+    } catch (err) {
+      if (conn) await conn.query('ROLLBACK TO SAVEPOINT notif').catch(() => {});
+      if (intento === 2) {
+        // Se registra fuera de la transacción para que el Administrador vea el aviso
+        await q('INSERT INTO errores_notificacion (usuario_id, texto, detalle, creado_en) VALUES (?, ?, ?, ?)',
+          [usuarioId, t, String(err.code || err.message).slice(0, 300), ahora()]).catch(() => {});
+      }
+    }
+  }
+}
+
+module.exports = {
+  ErrorApp, falla, h, V, limpiar, entre,
+  ahora, hoy, haceMin, enMin, sumarDias, diasEntre, diaSemana, esFecha, esHora,
+  periodo, notificar, RAZAS, RAZAS_LISTA, CPS, tamanoDeRaza, DIMS_TAMANO, Filtro, Reglas, dominioRecibeCorreo, mesesDeEdad, CP_ALCALDIA, sinAcentos, problemaNombre, OPCIONES_ANIMAL, CAMPOS_ANIMAL, FECHA_MIN, tieneLetras, telefonoReal, nacimientoMinimo,
+};
