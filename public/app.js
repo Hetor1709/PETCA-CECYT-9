@@ -2618,3 +2618,636 @@
       },
     };
   }
+
+  /* ---------- RF-18 a RF-22: solicitudes recibidas ---------- */
+  async function perfilRefugio(refrescar) {
+    if (!estado.perfil || refrescar) estado.perfil = await api('/refugio/perfil');
+    return estado.perfil;
+  }
+
+  /* Bloques de 30 minutos dentro del horario del día (RF-21) */
+  const bloques = (abre, cierra) => {
+    const aMin = (h) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3));
+    const res = [];
+    for (let m = Math.ceil(aMin(abre) / 30) * 30; m + 30 <= aMin(cierra); m += 30) res.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+    return res;
+  };
+
+  async function agendarCita(s) {
+    const p = await perfilRefugio();
+    const hoy = hoyCDMX();
+    const dias = Array.from({ length: 14 }, (_, i) => sumarDias(hoy, i + 1)).map((f) => {
+      const h = p.horario.find((x) => x.dia === diaSemana(f));
+      return { f, h, cerrado: !h || Number(h.cerrado) };
+    });
+    return dialogo({
+      titulo: `Cita con ${s.adoptante}`,
+      texto: `Para conocer a ${s.animal} y entregar los documentos. Fechas disponibles: las próximas 2 semanas.`,
+      cuerpo: html`
+        <label class="campo"><span class="campo__etiqueta">Fecha</span>
+          <select class="campo__entrada" name="fecha"><option value="">Selecciona una fecha</option>
+            ${dias.map((d) => html`<option value="${d.f}"${si(d.cerrado, 'disabled')}>${fechaBonita(d.f)} · ${d.f}${d.cerrado ? ' (cerrado)' : ''}</option>`)}</select></label>
+        <label class="campo"><span class="campo__etiqueta">Hora</span><select class="campo__entrada" name="hora" disabled><option value="">Primero elige la fecha</option></select></label>`,
+      confirmar: s.cita_fecha ? 'Reprogramar cita' : 'Agendar cita',
+      montar(d) {
+        const sf = $('[name="fecha"]', d);
+        const sh = $('[name="hora"]', d);
+        sf.addEventListener('change', () => {
+          const dia = dias.find((x) => x.f === sf.value);
+          sh.disabled = !dia || dia.cerrado;
+          sh.innerHTML = String(dia && !dia.cerrado
+            ? html`<option value="">Selecciona la hora</option>${bloques(dia.h.abre, dia.h.cierra).map((b) => html`<option>${b}</option>`)}`
+            : html`<option value="">Primero elige la fecha</option>`);
+        });
+      },
+      accion: async (f) => {
+        if (!f.fecha.value) fallo('La fecha debe estar dentro de los próximos 14 días.');
+        if (!f.hora.value) fallo('Seleccione una hora en bloques de 30 minutos.');
+        await api(`/refugio/solicitudes/${s.id}/cita`, { metodo: 'POST', datos: { fecha: f.fecha.value, hora: f.hora.value } });
+      },
+    });
+  }
+
+  /* ---------- Protocolo: visita domiciliaria, entrega y seguimiento ---------- */
+  function registrarVisita(s) {
+    return dialogo({
+      titulo: `Visita domiciliaria · ${s.adoptante}`,
+      texto: 'Revisa que el hogar sea seguro y adecuado para el perro (espacio, protección del sol y la lluvia, convivencia).',
+      cuerpo: html`
+        <div class="pastillas" role="radiogroup">
+          ${[['realizada', 'Realizada: el hogar es apto'], ['no_requerida', 'No fue necesaria'], ['no_apta', 'El hogar no es apto']].map(([v, t]) => html`
+            <label class="pastilla"><input type="radio" name="resultado" value="${v}"${si(s.visita === v, 'checked')}><span>${t}</span></label>`)}
+        </div>
+        <label class="campo" data-fecha-visita><span class="campo__etiqueta">Fecha de la visita</span><input class="campo__entrada" type="date" name="fecha" min="${s.aprobada}" max="${hoyCDMX()}" value="${s.visita_en || hoyCDMX()}"></label>
+        <label class="campo" data-motivo-visita hidden><span class="campo__etiqueta">¿Por qué no es apto?</span><textarea class="campo__textarea" name="motivo" maxlength="300" placeholder="Se le enviará a la persona adoptante (10 a 300 caracteres)"></textarea></label>`,
+      confirmar: 'Guardar',
+      montar(d) {
+        const pintar = () => {
+          const v = ($('input[name="resultado"]:checked', d) || {}).value;
+          $('[data-fecha-visita]', d).hidden = v === 'no_requerida';
+          $('[data-motivo-visita]', d).hidden = v !== 'no_apta';
+        };
+        d.addEventListener('change', pintar);
+        pintar();
+      },
+      accion: async (f) => {
+        const v = ($('input[name="resultado"]:checked', f) || {}).value;
+        if (!v) fallo('Seleccione el resultado de la visita domiciliaria.');
+        const datos = { resultado: v, fecha: f.fecha.value };
+        if (v === 'no_apta') datos.motivo = revisarTexto(f.motivo.value, { min: 10, max: 300, campo: 'El motivo', minPalabras: 2, lineas: 1 });
+        aviso((await api(`/refugio/solicitudes/${s.id}/visita`, { metodo: 'PUT', datos })).mensaje);
+      },
+    });
+  }
+
+  /* Lista de entrega (Ley de Protección y Bienestar de los Animales de la CDMX, art. 32) */
+  function entregar(s) {
+    const meses = Reglas.mesesDeEdad(s.edad);
+    const esterilizado = Number(s.esterilizado) === 1;
+    if (!s.visita) { aviso('Antes de entregar, registra la visita domiciliaria (realizada o no requerida).', 'error'); return Promise.resolve(false); }
+    return dialogo({
+      titulo: `Entrega de ${s.animal} a ${s.adoptante}`,
+      texto: 'Confirma cada punto. Después se programa el seguimiento a la semana, al mes y a los 3 meses.',
+      ancho: true,
+      cuerpo: html`
+        <label class="campo"><span class="campo__etiqueta">Fecha de entrega</span><input class="campo__entrada" type="date" name="fecha" min="${s.aprobada}" max="${hoyCDMX()}" value="${hoyCDMX()}"></label>
+        <fieldset class="seccion seccion--compacta"><legend>Lista de entrega</legend>
+          <label class="casilla"><input type="checkbox" name="carta_firmada"><span>La persona adoptante firmó la carta compromiso de adopción.</span></label>
+          <label class="casilla"><input type="checkbox" name="desparasitado"><span>${s.animal} está desparasitado.</span></label>
+          <label class="casilla"><input type="checkbox" name="cartilla"><span>Se entregó la cartilla de vacunación.</span></label>
+          ${esterilizado ? html`<p class="nota">✓ ${s.animal} ya está registrado como esterilizado.</p>`
+    : html`<label class="casilla"><input type="checkbox" name="esterilizado"><span>${s.animal} ya fue esterilizado.</span></label>
+            ${meses != null && meses < 6 ? html`<label class="campo" data-compromiso><span class="campo__etiqueta">Si aún no: fecha comprometida para esterilizarlo (cachorro)</span>
+              <input class="campo__entrada" type="date" name="esterilizar_antes" min="${sumarDias(hoyCDMX(), 1)}" max="${sumarDias(hoyCDMX(), 240)}"></label>` : html`<p class="nota">Un perro de 6 meses o más debe entregarse esterilizado.</p>`}`}
+          <label class="campo"><span class="campo__etiqueta">Folio del RUAC <span class="opcional">(si ya se registró)</span></span>
+            <input class="campo__entrada" name="ruac" maxlength="30" placeholder="Registro Único de Animales de Compañía"></label>
+        </fieldset>`,
+      confirmar: 'Registrar adopción',
+      accion: async (f) => {
+        if (!f.fecha.value || f.fecha.value > hoyCDMX() || f.fecha.value < s.aprobada) fallo('La fecha de entrega debe estar entre la fecha de aprobación y hoy.');
+        const entrega = {
+          carta_firmada: f.carta_firmada.checked, desparasitado: f.desparasitado.checked, cartilla: f.cartilla.checked,
+          esterilizado: esterilizado || (f.esterilizado && f.esterilizado.checked), esterilizar_antes: f.esterilizar_antes ? f.esterilizar_antes.value : '', ruac: f.ruac.value.trim(),
+        };
+        if (!entrega.carta_firmada) fallo('La persona adoptante debe firmar la carta compromiso.');
+        if (!entrega.desparasitado) fallo(`${s.animal} debe entregarse desparasitado.`);
+        if (!entrega.cartilla) fallo('Entrega la cartilla de vacunación.');
+        if (!entrega.esterilizado && !entrega.esterilizar_antes) fallo(meses != null && meses < 6 ? 'Indica la fecha comprometida para esterilizarlo.' : `${s.animal} debe entregarse esterilizado.`);
+        const r = await api(`/refugio/solicitudes/${s.id}/adopcion`, { metodo: 'POST', datos: { fecha: f.fecha.value, entrega } });
+        aviso(r.mensaje);
+      },
+    });
+  }
+
+  function registrarSeguimiento(x, s) {
+    return dialogo({
+      titulo: `Seguimiento de ${ETAPAS[x.etapa]} · ${s.animal}`,
+      texto: `Contacta a ${s.adoptante}${s.adoptante_telefono ? ` (${s.adoptante_telefono})` : ''} y registra cómo está ${s.animal}.`,
+      cuerpo: html`
+        <div class="pastillas" role="radiogroup">${Object.entries(RESULTADOS).map(([v, t]) => html`<label class="pastilla"><input type="radio" name="resultado" value="${v}"><span>${t}</span></label>`)}</div>
+        <label class="campo"><span class="campo__etiqueta">Notas <span class="opcional">(obligatorias si no todo está bien)</span></span><textarea class="campo__textarea" name="notas" maxlength="300"></textarea></label>`,
+      confirmar: 'Guardar seguimiento',
+      accion: async (f) => {
+        const v = ($('input[name="resultado"]:checked', f) || {}).value;
+        if (!v) fallo('Seleccione cómo está el perro.');
+        const notas = f.notas.value.replace(/\s/g, '') || v !== 'bien' ? revisarTexto(f.notas.value, { min: 5, max: 300, campo: 'Las notas', minPalabras: 1, lineas: 4 }) : null;
+        aviso((await api(`/refugio/seguimientos/${x.id}`, { metodo: 'PUT', datos: { resultado: v, notas } })).mensaje);
+      },
+    });
+  }
+
+  const VISTAS_SOL = [['pendiente', 'Pendientes'], ['aprobada', 'En proceso'], ['adoptada', 'Adoptadas'], ['rechazada', 'Cerradas']];
+  async function vistaRefugioSolicitudes(ctx) {
+    const foco = idValido(ctx.query.get('id'));
+    const animalFiltro = idValido(ctx.query.get('animal_id'));
+    const filtro = VISTAS_SOL.some(([v]) => v === ctx.query.get('estado')) ? ctx.query.get('estado') : 'pendiente';
+    const r = await api(foco ? `/refugio/solicitudes?id=${foco}` : animalFiltro ? `/refugio/solicitudes?animal_id=${animalFiltro}` : `/refugio/solicitudes?estado=${filtro}`);
+    const lista = r.solicitudes;
+    const hoy = hoyCDMX();
+    const acciones = (s) => {
+      if (s.estado === 'pendiente') {
+        return html`<button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-accion="aprobar" data-id="${s.id}">Aprobar</button>
+          <button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-accion="rechazar" data-id="${s.id}">Rechazar</button>`;
+      }
+      if (s.estado === 'aprobada' && !s.concretada_en && s.animal_estado === 'disponible') {
+        return html`<button class="boton-contorno boton-contorno--chico" type="button" data-accion="cita" data-id="${s.id}">${s.cita_fecha ? 'Reprogramar cita' : '1 · Agendar cita'}</button>
+          <button class="boton-contorno boton-contorno--chico" type="button" data-accion="visita" data-id="${s.id}">${s.visita ? 'Cambiar visita' : '2 · Registrar visita'}</button>
+          <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-accion="adopcion" data-id="${s.id}"${si(!s.visita, 'disabled title="Registra primero la visita domiciliaria"')}>3 · Entregar</button>
+          <button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-accion="rechazar" data-id="${s.id}">Cancelar aprobación</button>`;
+      }
+      return '';
+    };
+    const seguimientos = (s) => (s.concretada_en && s.seguimientos.length ? html`
+      <ul class="seguimiento">${s.seguimientos.map((x) => html`
+        <li class="${x.realizado_en ? 'hecho' : x.programado <= hoy ? 'toca' : ''}"><span>${ETAPAS[x.etapa]} · ${x.programado}</span>
+          <span>${x.realizado_en ? `✓ ${RESULTADOS[x.resultado]}${x.notas ? ` — ${x.notas}` : ''}` : html`<button class="enlace" type="button" data-seguimiento="${x.id}" data-id="${s.id}">${x.programado <= sumarDias(hoy, 3) ? 'Registrar' : 'Pendiente'}</button>`}</span></li>`)}</ul>` : '');
+    return {
+      html: html`
+      <section class="principal">
+        <h1 class="titulo-pagina">Solicitudes recibidas</h1>
+        ${subnavRefugio('#/refugio/solicitudes')}
+        <div class="contenedor contenedor--estrecho">
+          ${lineaProceso(-1)}
+          <div class="pestanas" role="group" aria-label="Filtrar por estado">
+            ${VISTAS_SOL.map(([v, t]) => html`<a class="pestana" href="#/refugio/solicitudes?estado=${v}"${si(!foco && !animalFiltro && v === filtro, 'aria-current="page"')}>${t}${r.cuentas[v] ? html` <span class="pestana__n">${r.cuentas[v]}</span>` : ''}</a>`)}
+          </div>
+          ${foco || animalFiltro ? html`<p class="nota centrado">${foco ? 'Mostrando la solicitud de la notificación.' : 'Mostrando las solicitudes de una mascota.'} <a class="enlace" href="#/refugio/solicitudes">Ver todas</a></p>` : ''}
+          ${!lista.length ? html`<div class="vacio">${seguro(SVG_HUELLA)}No hay solicitudes en esta sección.</div>`
+    : html`<ul class="filas filas--solicitudes">${lista.map((s) => {
+      const cerrada = ['rechazada', 'cancelada'].includes(s.estado);
+      return html`
+            <li class="fila fila--solicitud" data-solicitud="${s.id}">
+              <button class="boton-ficha" type="button" data-ver="${s.animal_id}" aria-label="Ver ficha de ${s.animal}"><span class="fila__imagen">${dibujo(s)}</span></button>
+              <div class="fila__cuerpo">
+                <div class="fila__cabeza">
+                  <div><p class="fila__titulo"><button class="enlace" type="button" data-ver="${s.animal_id}">${s.animal}</button> · ${s.adoptante}</p>
+                    <p class="fila__meta">${s.adoptante_correo}${s.adoptante_telefono ? html` · <a class="enlace" href="tel:${s.adoptante_telefono}">Tel. ${s.adoptante_telefono}</a>` : ''} · Enviada ${s.enviada}</p></div>
+                  ${insignia(s.concretada_en ? 'adoptada' : s.estado, s.concretada_en ? 'Adoptada' : ETQ[s.estado])}
+                </div>
+                ${cerrada ? '' : lineaProceso(pasoActual(s) - 1)}
+                ${s.motivo_rechazo ? html`<p class="fila__detalle">Motivo: ${s.motivo_rechazo}</p>` : ''}
+                ${s.visita ? html`<p class="fila__detalle">🏠 Visita domiciliaria: ${{ realizada: `realizada el ${s.visita_en}`, no_requerida: 'no requerida', no_apta: `hogar no apto (${s.visita_en})` }[s.visita]}</p>` : ''}
+                ${s.concretada_en ? html`<p class="fila__detalle">Entregado el ${s.concretada_en}${s.entrega && s.entrega.ruac ? ` · RUAC ${s.entrega.ruac}` : ''}${s.entrega && s.entrega.esterilizar_antes ? ` · Esterilizar antes del ${s.entrega.esterilizar_antes}` : ''}</p>`
+    : s.cita_fecha ? tablaCita(s, 'refugio') : ''}
+                ${seguimientos(s)}
+                ${resumenEnviado(s, 'Formato de adopción', s.estado === 'pendiente')}
+                ${conversacion(s, s.id === foco)}
+                <div class="acciones">${acciones(s)}</div>
+                <p class="acciones acciones--compactas"><button class="enlace" type="button" data-reportar-usuario="${s.adoptante_id}" data-nombre="${s.adoptante}">Reportar a esta persona</button></p>
+              </div>
+            </li>`;
+    })}</ul>`}
+        </div>
+      </section>`,
+      montar(raiz) {
+        montarConversaciones(raiz);
+        enfocarSolicitud(raiz, foco);
+        raiz.addEventListener('click', async (e) => {
+          const ver = e.target.closest('[data-ver]');
+          if (ver) { verMascota(ver.dataset.ver); return; }
+          const rep = e.target.closest('[data-reportar-usuario]');
+          if (rep) { reportar('usuario', Number(rep.dataset.reportarUsuario), rep.dataset.nombre); return; }
+          const sg = e.target.closest('[data-seguimiento]');
+          if (sg) {
+            const s = lista.find((x) => x.id === Number(sg.dataset.id));
+            const x = s.seguimientos.find((y) => y.id === Number(sg.dataset.seguimiento));
+            if (x.programado > sumarDias(hoy, 3)) { aviso(`Este seguimiento toca el ${x.programado}.`, 'error'); return; }
+            if (await registrarSeguimiento(x, s)) navegar();
+            return;
+          }
+          const b = e.target.closest('[data-accion]');
+          if (!b) return;
+          const s = lista.find((x) => x.id === Number(b.dataset.id));
+          let ok = false;
+          if (b.dataset.accion === 'aprobar') {
+            ok = await dialogo({ titulo: 'Aprobar solicitud', texto: `Se notificará a ${s.adoptante} que su solicitud para ${s.animal} fue aprobada. Después agenda la cita y la visita domiciliaria.`, confirmar: 'Aprobar', accion: () => api(`/refugio/solicitudes/${s.id}/aprobar`, { metodo: 'POST' }) });
+          } else if (b.dataset.accion === 'rechazar') {
+            ok = await dialogo({
+              titulo: s.estado === 'aprobada' ? 'Cancelar aprobación' : 'Rechazar solicitud',
+              texto: s.estado === 'aprobada' ? `La solicitud de ${s.adoptante} pasará a Rechazada y se cancelará su cita. Así podrás aprobar otra solicitud para ${s.animal}.` : '',
+              confirmar: 'Rechazar', peligro: true,
+              cuerpo: html`<label class="campo"><span class="campo__etiqueta">Motivo del rechazo</span><textarea class="campo__textarea" name="motivo" maxlength="300" placeholder="Explica brevemente el motivo (10 a 300 caracteres)"></textarea></label>`,
+              accion: async (f) => {
+                if (!f.motivo.value.trim()) fallo('Debe ingresar el motivo del rechazo.');
+                const m = revisarTexto(f.motivo.value, { min: 10, max: 300, campo: 'El motivo', minPalabras: 2, lineas: 1 });
+                await api(`/refugio/solicitudes/${s.id}/rechazar`, { metodo: 'POST', datos: { motivo: m } });
+              },
+            });
+          } else if (b.dataset.accion === 'cita') {
+            ok = await agendarCita(s);
+          } else if (b.dataset.accion === 'visita') {
+            ok = await registrarVisita(s);
+            if (ok) { navegar(); return; }
+          } else if (b.dataset.accion === 'adopcion') {
+            ok = await entregar(s);
+            if (ok) { navegar(); return; }
+          }
+          if (ok) { aviso('Listo.'); navegar(); }
+        });
+      },
+    };
+  }
+
+  /* ---------- RF-11: perfil del Refugio ---------- */
+  const ETQ_CAMBIO = { nombre: 'nombre', institucion: 'institución', telefono: 'teléfono', horario: 'horario' };
+  const camposCambio = (datos) => [...new Set(Object.keys(datos || {}).map((k) => ETQ_CAMBIO[k] || 'dirección'))].join(', ');
+  async function vistaRefugioPerfil() {
+    const [cat, p] = await Promise.all([catalogos(), perfilRefugio(true)]);
+    return {
+      html: html`
+      <section class="principal">
+        <h1 class="titulo-pagina">Perfil del refugio</h1>
+        ${subnavRefugio('#/refugio/perfil')}
+        <section class="panel panel--ancho">
+          <h2 class="panel__titulo">${p.nombre}</h2>
+          <p class="cuenta__subtitulo">${p.institucion} · ${p.correo}</p>
+          ${p.cambio_pendiente ? html`<div class="mensaje mensaje--aviso" role="status">⏳ Enviaste un cambio el ${p.cambio_pendiente.creado_en} (${camposCambio(p.cambio_pendiente.datos)}). Se aplicará cuando el Administrador lo apruebe; mientras, tu perfil público muestra los datos actuales.</div>` : ''}
+          ${!p.cambio_pendiente && p.ultimo_rechazo ? html`<div class="mensaje mensaje--error" role="status">Tu último cambio no fue aprobado (${p.ultimo_rechazo.revisado_en}): ${p.ultimo_rechazo.motivo}</div>` : ''}
+          <p class="nota">Por seguridad, los cambios de institución, dirección, teléfono y horario los revisa el Administrador antes de publicarse.</p>
+          <form class="formulario formulario--dos" novalidate data-perfil>
+            ${camposRefugio(cat, { ...p, ...(p.cambio_pendiente ? p.cambio_pendiente.datos : {}) }, true)}
+            <p class="mensaje mensaje--error campo--ancho" data-error role="alert"></p>
+            <div class="panel__acciones campo--ancho acciones acciones--centro">
+              <button class="boton-contorno boton-contorno--relleno" type="submit">${p.cambio_pendiente ? 'Actualizar cambio en revisión' : 'Enviar cambio a revisión'}</button>
+              <a class="boton-contorno" href="#/cuenta">Nombre y contraseña</a>
+            </div>
+          </form>
+        </section>
+      </section>`,
+      montar(raiz) {
+        const f = $('[data-perfil]', raiz);
+        montarHorario(f);
+        soloDigitos(f);
+        montarDireccion(f);
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          let datos;
+          try { datos = validarCamposRefugio(f, cat, true); } catch (err) { return errorEn(f, err.message); }
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/refugio/perfil', { metodo: 'PUT', datos });
+            estado.perfil = null;
+            aviso(r.mensaje);
+            navegar();
+          } catch (err) { errorEn(f, textoError(err)); ocupado(b, false); }
+        });
+      },
+    };
+  }
+
+  /* ---------- RF-35: estadísticas propias ---------- */
+  function vistaRefugioEstadisticas() {
+    return {
+      html: html`
+      <section class="principal">
+        <h1 class="titulo-pagina">Mis estadísticas</h1>
+        ${subnavRefugio('#/refugio/estadisticas')}
+        <section class="panel">${selectorPeriodo()}<div data-cifras></div></section>
+      </section>`,
+      montar(raiz) {
+        const pintar = async (params) => {
+          const r = await api(conQuery('/refugio/estadisticas', params));
+          $('[data-cifras]', raiz).innerHTML = String(html`
+            <div class="cifras">
+              <article class="cifra cifra--azul"><span class="cifra__numero">${r.ingresos}</span><span class="cifra__texto">animales ingresaron</span></article>
+              <article class="cifra cifra--durazno"><span class="cifra__numero">${r.adopciones}</span><span class="cifra__texto">adopciones concretadas</span></article>
+            </div>
+            <p class="nota">Periodo: ${r.inicio} a ${r.fin}</p>
+            ${!r.ingresos && !r.adopciones ? html`<p class="mensaje">No hay animales ni adopciones en el periodo seleccionado.</p>` : ''}`);
+        };
+        montarPeriodo(raiz, pintar);
+        pintar({ periodo: '7' }).catch(() => {});
+      },
+    };
+  }
+
+  /* ======================= 13. Vistas del Administrador ======================= */
+  const SECCIONES_ADMIN = [['#/admin', 'Resumen'], ['#/admin/verificacion', 'Verificación'], ['#/admin/refugios', 'Refugios'], ['#/admin/publicaciones', 'Publicaciones'],
+    ['#/admin/reportes', 'Reportes'], ['#/admin/cuentas', 'Cuentas'], ['#/admin/catalogos', 'Catálogos'], ['#/admin/estadisticas', 'Estadísticas']];
+  const SECCIONES_FUNC = ['#/admin', '#/admin/reportes', '#/admin/estadisticas'];
+  const MOTIVOS_PUBLICACION = ['Animal no doméstico', 'Contenido inapropiado', 'Información falsa', 'Otro'];
+  const marcoAdmin = (actual, titulo, contenido) => html`
+    <section class="principal">
+      <h1 class="titulo-pagina">${titulo}</h1>
+      <nav class="pestanas pestanas--admin" aria-label="Secciones de administración">
+        ${SECCIONES_ADMIN.filter(([h]) => estado.usuario.tipo === 'admin' || SECCIONES_FUNC.includes(h))
+    .map(([h, t]) => html`<a class="pestana" href="${h}"${si(h === actual, 'aria-current="page"')}>${t}</a>`)}
+      </nav>
+      <div class="contenedor">${contenido}</div>
+    </section>`;
+
+  async function vistaAdmin() {
+    const r = await api('/admin/resumen');
+    const esAdmin = r.rol === 'admin';
+    return {
+      html: marcoAdmin('#/admin', esAdmin ? 'Panel de administración' : 'Panel de funcionario', html`
+        ${esAdmin && r.erroresNotificacion.length ? html`
+          <div class="mensaje mensaje--error">No se pudo notificar al usuario de la solicitud o del animal. (${r.erroresNotificacion.length})
+            <button class="enlace" type="button" data-revisados>Marcar como revisado</button></div><br>` : ''}
+        <div class="tablero">
+          ${esAdmin ? html`
+          <a href="#/admin/verificacion"><article class="cifra cifra--durazno"><span class="cifra__numero">${r.refugiosPendientes}</span><span class="cifra__texto">refugios por verificar</span></article></a>
+          <a href="#/admin/refugios?vista=cambios"><article class="cifra cifra--durazno"><span class="cifra__numero">${r.cambiosPendientes}</span><span class="cifra__texto">cambios de datos por aprobar</span></article></a>` : ''}
+          <a href="#/admin/reportes"><article class="cifra cifra--azul"><span class="cifra__numero">${r.reportesAbiertos}</span><span class="cifra__texto">reportes abiertos</span></article></a>
+          <a href="#/admin/estadisticas"><article class="cifra cifra--blanco"><span class="cifra__numero">📊</span><span class="cifra__texto">estadísticas y CSV</span></article></a>
+        </div>`),
+      montar(raiz) {
+        const b = $('[data-revisados]', raiz);
+        if (b) b.addEventListener('click', async () => { await api('/admin/errores-notificacion/revisados', { metodo: 'POST' }).catch(() => {}); navegar(); });
+      },
+    };
+  }
+
+  /* Bloque de verificación en Google Maps: la búsqueda que arma Dopta con los datos del refugio */
+  const bloqueMapa = (m, titulo = 'Comprobar en Google Maps') => html`
+    <div class="mapa-verificar">
+      <p class="mapa-verificar__titulo">${titulo}</p>
+      <p class="mapa-verificar__consulta"><code>${m.consulta}</code></p>
+      ${m.embed ? html`<iframe class="mapa-verificar__marco" src="${m.embed}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Mapa: ${m.consulta}"></iframe>` : ''}
+      <p class="acciones acciones--compactas">
+        <a class="boton-contorno boton-contorno--chico" href="${m.url}" target="_blank" rel="noopener noreferrer">Buscar el refugio ↗</a>
+        <a class="boton-contorno boton-contorno--chico" href="${m.soloDireccion}" target="_blank" rel="noopener noreferrer">Solo la dirección ↗</a>
+      </p>
+    </div>`;
+  const listaHorario = (horario) => html`<ul class="horario-lista">${(horario || []).map((h) => html`<li><span>${DIAS[h.dia]}</span><span>${Number(h.cerrado) ? 'Cerrado' : `${h.abre}–${h.cierra}`}</span></li>`)}</ul>`;
+
+  /* RF-25 */
+  async function vistaAdminVerificacion() {
+    const lista = await api('/admin/refugios-pendientes');
+    return {
+      html: marcoAdmin('#/admin/verificacion', 'Verificar refugios', !lista.length
+        ? html`<div class="vacio contenedor--estrecho contenedor">${seguro(SVG_HUELLA)}No hay refugios pendientes de verificación.</div>`
+        : html`<ul class="filas contenedor contenedor--estrecho">${lista.map((x) => html`
+          <li class="fila fila--sin-imagen fila--verificar">
+            <div class="fila__cuerpo">
+              <p class="fila__titulo">${x.nombre} ${x.plazo_vencido ? insignia('vencido', 'Plazo vencido') : ''}</p>
+              <p class="fila__meta">${x.institucion} · ${x.correo}</p>
+              <p class="fila__meta">Registro: ${String(x.creado).slice(0, 16)} · Aviso ${x.aviso_version} aceptado ${String(x.aviso_fecha).slice(0, 16)}</p>
+              <p class="fila__detalle">${x.direccion}${x.alcaldia ? `, ${x.alcaldia}` : ''} · Tel. ${x.telefono} ${x.lat ? '· 📍 ubicación verificada por Google' : '· ubicación escrita a mano'}</p>
+              ${listaHorario(x.horario)}
+              ${x.coincidencias.length ? html`<div class="mensaje mensaje--aviso">⚠️ Mismo teléfono o dirección que: ${x.coincidencias.map((c) => `${c.nombre} (${ETQ[c.estado] || c.estado})`).join(', ')}</div>` : ''}
+              ${bloqueMapa(x.mapa)}
+              <div class="acciones">
+                <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-aceptar="${x.id}">Aceptar</button>
+                <button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-rechazar="${x.id}">Rechazar</button>
+              </div>
+            </div>
+          </li>`)}</ul>`),
+      montar(raiz) {
+        raiz.addEventListener('click', async (e) => {
+          const b = e.target.closest('[data-aceptar], [data-rechazar]');
+          if (!b) return;
+          const aceptar = !!b.dataset.aceptar;
+          const id = b.dataset.aceptar || b.dataset.rechazar;
+          const x = lista.find((r) => r.id === Number(id));
+          const ok = await dialogo({
+            titulo: aceptar ? 'Aceptar refugio' : 'Rechazar refugio',
+            texto: aceptar ? `${x.nombre} podrá iniciar sesión y publicar animales. ¿Comprobaste en el mapa que existe?` : `${x.nombre} verá el motivo y podrá corregir y reenviar sus datos.`,
+            cuerpo: aceptar ? '' : html`<label class="campo"><span class="campo__etiqueta">Motivo del rechazo</span><textarea class="campo__textarea" name="motivo" maxlength="300" placeholder="Ej. No encontramos el refugio en la dirección indicada (10 a 300 caracteres)"></textarea></label>`,
+            confirmar: aceptar ? 'Aceptar' : 'Rechazar', peligro: !aceptar,
+            accion: async (f) => {
+              const datos = aceptar ? undefined : { motivo: revisarTexto(f.motivo.value, { min: 10, max: 300, campo: 'El motivo', minPalabras: 2, lineas: 2 }) };
+              await api(`/admin/refugios/${id}/${aceptar ? 'aceptar' : 'rechazar'}`, { metodo: 'POST', datos });
+            },
+          });
+          if (ok) { aviso(aceptar ? 'Cuenta verificada.' : 'Cuenta rechazada.'); navegar(); }
+        });
+      },
+    };
+  }
+
+  /* Refugios: tabla con indicadores, ficha de detalle y cambios de datos por aprobar */
+  const valorCambio = (k, v, alcaldias) => {
+    if (v == null || v === '') return '—';
+    if (k === 'horario') return v.map((h) => `${DIAS[h.dia].slice(0, 3)} ${Number(h.cerrado) ? 'cerrado' : `${h.abre}–${h.cierra}`}`).join(' · ');
+    if (k === 'alcaldia_id') return (alcaldias.find((a) => a.id === Number(v)) || {}).nombre || v;
+    return String(v);
+  };
+  const CAMPOS_VISIBLES = ['nombre', 'institucion', 'direccion', 'colonia', 'cp', 'alcaldia_id', 'telefono', 'horario'];
+  const ETQ_CAMPO = { nombre: 'Nombre', institucion: 'Institución', direccion: 'Dirección', colonia: 'Colonia', cp: 'C.P.', alcaldia_id: 'Alcaldía', telefono: 'Teléfono', horario: 'Horario' };
+
+  async function vistaAdminRefugios(ctx) {
+    const vista = ctx.query.get('vista') === 'cambios' ? 'cambios' : 'lista';
+    const detalle = idValido(ctx.query.get('id'));
+    const cat = await catalogos();
+    const filtros = { q: (ctx.query.get('q') || '').slice(0, 60), estado: ctx.query.get('estado') || '', alcaldia: ctx.query.get('alcaldia') || '', orden: ctx.query.get('orden') || 'nombre' };
+    const [lista, cambios, x] = await Promise.all([
+      vista === 'lista' ? api(conQuery('/admin/refugios', filtros)) : [],
+      api('/admin/refugio-cambios'),
+      detalle ? api(`/admin/refugios/${detalle}`) : null,
+    ]);
+    const tabs = html`<div class="pestanas">
+      <a class="pestana" href="#/admin/refugios"${si(vista === 'lista' && !detalle, 'aria-current="page"')}>Todos</a>
+      <a class="pestana" href="#/admin/refugios?vista=cambios"${si(vista === 'cambios', 'aria-current="page"')}>Cambios por aprobar${cambios.length ? html` <span class="pestana__n">${cambios.length}</span>` : ''}</a></div>`;
+    const tablaCambio = (c) => html`<table class="tabla tabla--comparar"><thead><tr><th>Dato</th><th>Actual</th><th>Nuevo</th></tr></thead><tbody>
+      ${CAMPOS_VISIBLES.filter((k) => k in c.datos).map((k) => html`<tr><th scope="row">${ETQ_CAMPO[k]}</th><td data-col="Actual">${valorCambio(k, c.anteriores[k], cat.alcaldia)}</td><td data-col="Nuevo"><strong>${valorCambio(k, c.datos[k], cat.alcaldia)}</strong></td></tr>`)}
+      </tbody></table>`;
+    let cuerpo;
+    if (detalle && x) {
+      const kpi = [['Disponibles', x.animales.filter((a) => a.estado === 'disponible' && !Number(a.eliminado)).length], ['Adoptados', x.animales.filter((a) => a.estado === 'adoptado').length],
+        ['Días promedio a adopción', x.dias_promedio_adopcion ?? '—'], ['Reportes', x.reportes.length]];
+      cuerpo = html`
+        ${botonRegresar('#/admin/refugios')}
+        <section class="panel panel--ancho">
+          <div class="perfil-admin">
+            ${avatar({ id: x.id, nombre: x.nombre, avatar_v: x.avatar_v })}
+            <div><h2 class="panel__titulo">${x.nombre} ${insignia(x.estado, ETQ[x.estado] || x.estado)}</h2>
+              <p class="fila__meta">${x.institucion} · ${x.correo} · Tel. ${x.telefono}</p>
+              <p class="fila__meta">Alta ${String(x.creado).slice(0, 10)}${x.verificado_en ? ` · Verificado ${String(x.verificado_en).slice(0, 10)}` : ''}</p></div>
+          </div>
+          <div class="cifras cifras--cuatro">${kpi.map(([t, n]) => html`<article class="cifra cifra--blanco"><span class="cifra__numero">${n}</span><span class="cifra__texto">${t}</span></article>`)}</div>
+          <div class="dos-columnas">
+            <div><h3 class="subtitulo">Ubicación y horario</h3><p class="fila__detalle">${x.direccion}${x.alcaldia ? `, ${x.alcaldia}` : ''}</p>${listaHorario(x.horario)}</div>
+            ${bloqueMapa(x.mapa)}
+          </div>
+          <h3 class="subtitulo">Animales (${x.animales.length})</h3>
+          ${!x.animales.length ? html`<p class="nota">Sin publicaciones.</p>` : html`<table class="tabla"><thead><tr><th>Animal</th><th>Publicado</th><th>Solicitudes</th><th>Estado</th></tr></thead><tbody>
+            ${x.animales.map((a) => html`<tr><td data-col="Animal">${Number(a.eliminado) ? a.nombre : html`<a class="enlace" href="#/animal/${a.id}">${a.nombre}</a>`}</td><td data-col="Publicado">${a.publicado}</td><td data-col="Solicitudes">${a.solicitudes}</td>
+              <td>${Number(a.eliminado) ? insignia('eliminada', 'Eliminado') : insignia(a.estado, ETQ[a.estado])}</td></tr>`)}</tbody></table>`}
+          ${x.reportes.length ? html`<h3 class="subtitulo">Reportes recibidos</h3><ul class="lista-simple">${x.reportes.map((rp) => html`<li><strong>${rp.motivo}</strong> · ${rp.creado} · ${ETQ[rp.estado]}<br><span class="texto-largo">${rp.descripcion}</span></li>`)}</ul>` : ''}
+          ${x.cambios.length ? html`<h3 class="subtitulo">Historial de cambios de datos</h3>${x.cambios.map((c) => html`<p class="fila__meta">${c.creado} · ${ETQ[c.estado] || c.estado}${c.motivo ? ` · ${c.motivo}` : ''}</p>${tablaCambio(c)}`)}` : ''}
+        </section>`;
+    } else if (vista === 'cambios') {
+      cuerpo = html`${tabs}${!cambios.length ? html`<div class="vacio">No hay cambios de datos esperando aprobación.</div>` : html`
+        <ul class="filas">${cambios.map((c) => html`
+          <li class="fila fila--sin-imagen"><div class="fila__cuerpo">
+            <p class="fila__titulo"><a class="enlace" href="#/admin/refugios?id=${c.refugio_id}">${c.nombre}</a> · ${c.institucion}</p>
+            <p class="fila__meta">${c.correo} · Solicitado ${c.creado}</p>
+            ${tablaCambio(c)}
+            ${('direccion' in c.datos || 'institucion' in c.datos || 'nombre' in c.datos) ? html`<div class="dos-columnas">${bloqueMapa(c.mapa_actual, 'Datos actuales')}${bloqueMapa(c.mapa_nuevo, 'Datos nuevos')}</div>` : ''}
+            <div class="acciones">
+              <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-aprobar-cambio="${c.id}">Aprobar y aplicar</button>
+              <button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-rechazar-cambio="${c.id}">Rechazar</button>
+            </div></div></li>`)}</ul>`}`;
+    } else {
+      const ORDENES = [['nombre', 'Nombre'], ['recientes', 'Más recientes'], ['adopciones', 'Más adopciones'], ['reportes', 'Más reportes']];
+      const tot = (k) => lista.reduce((a, y) => a + Number(y[k] || 0), 0);
+      cuerpo = html`${tabs}
+        <form class="busqueda-admin" data-filtros>
+          <input class="campo__entrada" name="q" type="search" placeholder="Nombre, institución, correo o teléfono" value="${filtros.q}" maxlength="60">
+          <select class="campo__entrada" name="estado"><option value="">Todos los estados</option>${['activa', 'pendiente', 'rechazada', 'baja', 'eliminada'].map((e) => html`<option value="${e}"${si(e === filtros.estado, 'selected')}>${ETQ[e] || e}</option>`)}</select>
+          <select class="campo__entrada" name="alcaldia"><option value="">Todas las alcaldías</option>${activos(cat.alcaldia).map((a) => html`<option value="${a.id}"${si(String(a.id) === filtros.alcaldia, 'selected')}>${a.nombre}</option>`)}</select>
+          <select class="campo__entrada" name="orden">${ORDENES.map(([v, t]) => html`<option value="${v}"${si(v === filtros.orden, 'selected')}>${t}</option>`)}</select>
+          <button class="boton-contorno boton-contorno--chico" type="submit">Filtrar</button>
+        </form>
+        <div class="cifras cifras--cuatro">
+          ${[['Refugios', lista.length], ['Perros disponibles', tot('disponibles')], ['Adoptados', tot('adoptados')], ['Solicitudes activas', tot('activas')]]
+    .map(([t, n]) => html`<article class="cifra cifra--blanco"><span class="cifra__numero">${n}</span><span class="cifra__texto">${t}</span></article>`)}
+        </div>
+        ${!lista.length ? html`<div class="vacio">No hay refugios con estos filtros.</div>` : html`
+        <div class="tabla-desliza"><table class="tabla tabla--refugios">
+          <thead><tr><th>Refugio</th><th>Alcaldía</th><th>Estado</th><th class="num">Disp.</th><th class="num">Adopt.</th><th class="num">Activas</th><th class="num">Reportes</th><th></th></tr></thead>
+          <tbody>${lista.map((y) => html`<tr>
+            <td data-col="Refugio"><a class="enlace" href="#/admin/refugios?id=${y.id}"><strong>${y.nombre}</strong></a><br><span class="fila__meta">${y.institucion} · Tel. ${y.telefono}</span></td>
+            <td data-col="Alcaldía">${y.alcaldia || '—'}</td>
+            <td>${insignia(y.estado, ETQ[y.estado] || y.estado)}${Number(y.cambios) ? html` <span class="insignia insignia--pendiente">cambio</span>` : ''}</td>
+            <td class="num" data-col="Disponibles">${y.disponibles}</td><td class="num" data-col="Adoptados">${y.adoptados}</td><td class="num" data-col="Activas">${y.activas}</td>
+            <td class="num" data-col="Reportes">${Number(y.reportes) ? html`<strong class="texto-alerta">${y.reportes}</strong>` : 0}</td>
+            <td><a class="boton-contorno boton-contorno--chico" href="${y.mapa.url}" target="_blank" rel="noopener noreferrer" title="${y.mapa.consulta}">Mapa ↗</a></td>
+          </tr>`)}</tbody></table></div>`}`;
+    }
+    return {
+      html: marcoAdmin('#/admin/refugios', 'Refugios', cuerpo),
+      montar(raiz) {
+        const f = $('[data-filtros]', raiz);
+        if (f) f.addEventListener('submit', (e) => { e.preventDefault(); location.hash = conQuery('#/admin/refugios', { q: f.q.value.trim(), estado: f.estado.value, alcaldia: f.alcaldia.value, orden: f.orden.value === 'nombre' ? '' : f.orden.value }); });
+        raiz.addEventListener('click', async (e) => {
+          const ap = e.target.closest('[data-aprobar-cambio]');
+          const re = e.target.closest('[data-rechazar-cambio]');
+          if (!ap && !re) return;
+          const id = (ap || re).dataset.aprobarCambio || (re && re.dataset.rechazarCambio);
+          const ok = await dialogo({
+            titulo: ap ? 'Aprobar cambio de datos' : 'Rechazar cambio de datos',
+            texto: ap ? 'Los nuevos datos se publicarán de inmediato en el perfil del refugio.' : 'El refugio conservará sus datos actuales y verá el motivo.',
+            cuerpo: ap ? '' : html`<label class="campo"><span class="campo__etiqueta">Motivo</span><textarea class="campo__textarea" name="motivo" maxlength="300" placeholder="10 a 300 caracteres"></textarea></label>`,
+            confirmar: ap ? 'Aprobar' : 'Rechazar', peligro: !ap,
+            accion: async (fm) => {
+              const datos = ap ? undefined : { motivo: revisarTexto(fm.motivo.value, { min: 10, max: 300, campo: 'El motivo', minPalabras: 2, lineas: 2 }) };
+              const r = await api(`/admin/refugio-cambios/${id}/${ap ? 'aprobar' : 'rechazar'}`, { metodo: 'POST', datos });
+              aviso(r.mensaje);
+            },
+          });
+          if (ok) navegar();
+        });
+      },
+    };
+  }
+
+  /* RF-26 / RF-27 */
+  async function vistaAdminPublicaciones(ctx) {
+    const pagina = idValido(ctx.query.get('pagina')) || 1;
+    const r = await api(`/admin/publicaciones?pagina=${pagina}`);
+    return {
+      html: marcoAdmin('#/admin/publicaciones', 'Publicaciones', !r.publicaciones.length
+        ? html`<div class="vacio">No hay publicaciones registradas.</div>`
+        : html`
+          <table class="tabla">
+            <thead><tr><th>Publicada</th><th>Animal</th><th>Raza</th><th>Refugio</th><th>Estado</th><th></th></tr></thead>
+            <tbody>${r.publicaciones.map((p) => html`
+              <tr>
+                <td data-col="Publicada">${p.publicado}</td>
+                <td data-col="Animal"><strong>${p.nombre}</strong></td>
+                <td data-col="Raza">${nombreRaza(p)}</td>
+                <td data-col="Refugio">${p.refugio}</td>
+                <td>${insignia(p.estado, ETQ[p.estado])}</td>
+                <td><div class="acciones">${p.estado === 'disponible' ? html`<a class="boton-contorno boton-contorno--chico" href="#/animal/${p.id}">Ver</a>` : ''}
+                  <button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-eliminar="${p.id}">Eliminar</button></div></td>
+              </tr>`)}</tbody>
+          </table>
+          ${paginacion(r.pagina, r.total, r.porPagina)}`),
+      montar(raiz) {
+        $$('[data-pagina]', raiz).forEach((b) => b.addEventListener('click', () => { location.hash = `#/admin/publicaciones?pagina=${b.dataset.pagina}`; }));
+        $$('[data-eliminar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const p = r.publicaciones.find((x) => x.id === Number(b.dataset.eliminar));
+          const ok = await dialogo({
+            titulo: `Eliminar publicación de ${p.nombre}`, confirmar: 'Eliminar', peligro: true,
+            texto: 'Se retirará del catálogo y se notificará al refugio.',
+            cuerpo: html`
+              <label class="campo"><span class="campo__etiqueta">Motivo</span><select class="campo__entrada" name="motivo"><option value="">Selecciona un motivo</option>${MOTIVOS_PUBLICACION.map((m) => html`<option>${m}</option>`)}</select></label>
+              <label class="campo" data-otro hidden><span class="campo__etiqueta">Descripción</span><textarea class="campo__textarea" name="descripcion" maxlength="300" placeholder="10 a 300 caracteres"></textarea></label>`,
+            montar: (d) => $('[name="motivo"]', d).addEventListener('change', (e) => { $('[data-otro]', d).hidden = e.target.value !== 'Otro'; }),
+            accion: async (f) => {
+              if (!MOTIVOS_PUBLICACION.includes(f.motivo.value)) fallo('Seleccione un motivo.');
+              if (f.motivo.value === 'Otro' && !V.entre(f.descripcion.value.trim(), 10, 300)) fallo('La descripción debe tener de 10 a 300 caracteres.');
+              await api(`/admin/publicaciones/${p.id}/eliminar`, { metodo: 'POST', datos: { motivo: f.motivo.value, descripcion: f.descripcion.value.trim() } });
+            },
+          });
+          if (ok) { aviso('Publicación eliminada.'); navegar(); }
+        }));
+      },
+    };
+  }
+
+  /* RF-34: reportes de adoptantes (sobre publicaciones y refugios) y de refugios (sobre adoptantes) */
+  const ETQ_OBJETIVO = { animal: 'Publicación', refugio: 'Refugio', usuario: 'Adoptante' };
+  async function vistaAdminReportes(ctx) {
+    const filtro = ['abierto', 'resuelto', 'descartado'].includes(ctx.query.get('estado')) ? ctx.query.get('estado') : 'abierto';
+    const pagina = idValido(ctx.query.get('pagina')) || 1;
+    const r = await api(`/admin/reportes?estado=${filtro}&pagina=${pagina}`);
+    const esAdmin = estado.usuario.tipo === 'admin';
+    const enlaceObjetivo = (x) => {
+      if (!x.objetivo) return 'ya no existe';
+      if (x.objetivo_tipo === 'animal') return html`<a class="enlace" href="#/animal/${x.objetivo_id}">${x.objetivo}</a>`;
+      if (x.objetivo_tipo === 'refugio' && esAdmin) return html`<a class="enlace" href="#/admin/refugios?id=${x.objetivo_id}">${x.objetivo}</a>`;
+      return x.objetivo;
+    };
+    return {
+      html: marcoAdmin('#/admin/reportes', 'Reportes', html`
+        <div class="pestanas">${['abierto', 'resuelto', 'descartado'].map((e) => html`<a class="pestana" href="#/admin/reportes?estado=${e}"${si(e === filtro, 'aria-current="page"')}>${ETQ[e]}s${r.cuentas[e] ? html` <span class="pestana__n">${r.cuentas[e]}</span>` : ''}</a>`)}</div>
+        ${!r.reportes.length ? html`<div class="vacio contenedor contenedor--estrecho">No hay reportes con este estado.</div>` : html`
+        <ul class="filas filas--reportes contenedor contenedor--estrecho">${r.reportes.map((x) => html`
+          <li class="fila fila--sin-imagen fila--reporte">
+            <div class="fila__cuerpo">
+              <div class="fila__cabeza">
+                <p class="fila__titulo">${x.motivo}</p>
+                ${insignia(x.estado, ETQ[x.estado])}
+              </div>
+              <p class="fila__meta"><span class="insignia">${ETQ_OBJETIVO[x.objetivo_tipo]}</span> ${enlaceObjetivo(x)}${Number(x.veces_reportado) > 1 ? html` · <strong class="texto-alerta">reportado ${x.veces_reportado} veces</strong>` : ''}</p>
+              <p class="fila__meta">Por ${x.autor} (${ETQ[x.autor_tipo]}) · ${x.autor_correo} · ${x.creado}</p>
+              <p class="fila__detalle texto-largo">${x.descripcion}</p>
+              ${x.nota ? html`<p class="fila__detalle texto-largo"><strong>Nota${x.atendio ? ` de ${x.atendio}` : ''}${x.cerrado ? ` (${x.cerrado})` : ''}:</strong> ${x.nota}</p>` : ''}
+              ${x.estado === 'abierto' ? html`<div class="acciones">
+                <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-cerrar="resolver" data-id="${x.id}">Resolver</button>
+                <button class="boton-contorno boton-contorno--chico" type="button" data-cerrar="descartar" data-id="${x.id}">Descartar</button></div>` : ''}
+            </div>
+          </li>`)}</ul>
+        ${paginacion(r.pagina, r.total, r.porPagina)}`}`),
+      montar(raiz) {
+        $$('[data-pagina]', raiz).forEach((b) => b.addEventListener('click', () => { location.hash = `#/admin/reportes?estado=${filtro}&pagina=${b.dataset.pagina}`; }));
+        $$('[data-cerrar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const accion = b.dataset.cerrar === 'resolver' ? 'resolver' : 'descartar';
+          const ok = await dialogo({
+            titulo: accion === 'resolver' ? 'Resolver reporte' : 'Descartar reporte', confirmar: accion === 'resolver' ? 'Resolver' : 'Descartar',
+            texto: 'Quien reportó recibirá una notificación con tu nota.',
+            cuerpo: html`<label class="campo"><span class="campo__etiqueta">Nota</span><textarea class="campo__textarea" name="nota" maxlength="300" placeholder="10 a 300 caracteres"></textarea></label>`,
+            accion: async (f) => {
+              const nota = revisarTexto(f.nota.value, { min: 10, max: 300, campo: 'La nota', minPalabras: 2, lineas: 3 });
+              await api(`/admin/reportes/${b.dataset.id}/${accion}`, { metodo: 'POST', datos: { nota } });
+            },
+          });
+          if (ok) { aviso('Reporte actualizado.'); navegar(); }
+        }));
+      },
+    };
+  }
