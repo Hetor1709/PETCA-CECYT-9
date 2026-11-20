@@ -2106,3 +2106,515 @@
       f.texto.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) f.requestSubmit(); });
     });
   }
+  /* Si se llegó desde una notificación (#/...?id=12), resalta esa solicitud */
+  function enfocarSolicitud(raiz, id) {
+    if (!id) return;
+    const li = $(`[data-solicitud="${id}"]`, raiz);
+    if (!li) return;
+    li.classList.add('fila--resaltada');
+    $$('details', li).forEach((d) => { if (d.matches('.chat')) d.open = true; });
+    setTimeout(() => li.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120);
+  }
+  const ETAPAS = { '1_semana': '1 semana', '1_mes': '1 mes', '3_meses': '3 meses' };
+  const RESULTADOS = { bien: 'Todo bien', con_dudas: 'Con dudas', problema: 'Hay un problema', sin_contacto: 'Sin contacto' };
+
+  /* Cita de adopción en tabla: qué día, a qué hora, dónde y qué llevar */
+  function tablaCita(s, para) {
+    const filas = para === 'adoptante'
+      ? [
+        ['Día', fechaBonita(s.cita_fecha)],
+        ['Hora', `${s.cita_hora} h`],
+        ['Refugio', s.refugio],
+        ['Dirección', html`${s.direccion} · <a class="enlace" href="${mapaUrl(s, true)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>`],
+        ['Teléfono', html`<a class="enlace" href="tel:${s.telefono}">${s.telefono}</a>`],
+        ['Qué llevar', s.requisitos && s.requisitos.length ? html`<ul class="tabla-cita__lista">${s.requisitos.map((r) => html`<li>${r}</li>`)}</ul>` : 'Identificación oficial'],
+      ]
+      : [
+        ['Día', fechaBonita(s.cita_fecha)],
+        ['Hora', `${s.cita_hora} h`],
+        ['Adoptante', s.adoptante],
+        ['Teléfono', s.adoptante_telefono ? html`<a class="enlace" href="tel:${s.adoptante_telefono}">${s.adoptante_telefono}</a>` : 'Sin teléfono'],
+        ['Mascota', s.animal],
+      ];
+    return html`<table class="tabla-cita"><caption>📅 Cita de adopción</caption>
+      <tbody>${filas.map(([k, v]) => html`<tr><th scope="row">${k}</th><td>${v}</td></tr>`)}</tbody></table>`;
+  }
+
+  async function vistaMisSolicitudes(ctx) {
+    let lista = null;
+    try { lista = await api('/solicitudes/mias'); } catch { /* se muestra el mensaje */ }
+    const foco = idValido(ctx.query.get('id'));
+    const activas = (lista || []).filter((s) => ['pendiente', 'aprobada'].includes(s.estado) && !s.concretada_en);
+    return {
+      html: html`
+      <section class="principal">
+        <div class="contenedor contenedor--estrecho">
+          <h1 class="titulo-pagina">Mis solicitudes</h1>
+          ${lista && lista.length ? html`<p class="nota centrado">${activas.length} activa${activas.length === 1 ? '' : 's'} de 5 posibles · Toca “Mensajes” para hablar con el refugio.</p>` : ''}
+          ${lista === null ? html`<p class="mensaje mensaje--error">No se pudo cargar la lista. Intente de nuevo.</p>`
+    : !lista.length ? html`<div class="vacio">${seguro(SVG_HUELLA)}No tiene solicitudes registradas.<p><a class="boton-contorno" href="#/">Ver el catálogo</a></p></div>`
+      : html`<ul class="filas filas--solicitudes">${lista.map((s) => {
+        const cerrada = ['rechazada', 'cancelada'].includes(s.estado);
+        const sinRespuesta = s.estado === 'pendiente' && !s.mensajes.some((m) => !m.mio);
+        return html`
+            <li class="fila fila--solicitud" data-solicitud="${s.id}">
+              <div class="fila__imagen">${imagenAnimal(s)}</div>
+              <div class="fila__cuerpo">
+                <div class="fila__cabeza">
+                  <div><p class="fila__titulo"><a class="enlace" href="#/animal/${s.animal_id}">${s.animal}</a></p>
+                    <p class="fila__meta"><a class="enlace" href="#/refugios/${s.refugio_id}">${s.refugio}</a> · Enviada ${s.enviada}</p></div>
+                  ${insignia(s.concretada_en ? 'adoptada' : s.estado, s.concretada_en ? '¡Adoptado!' : ETQ[s.estado])}
+                </div>
+                ${lineaProceso(cerrada ? 0 : pasoActual(s) - 1, cerrada)}
+                ${cerrada && s.motivo_rechazo ? html`<p class="fila__detalle">Motivo: ${s.motivo_rechazo}</p>` : ''}
+                ${sinRespuesta ? html`<p class="fila__detalle">⏳ El refugio aún no responde. Abajo puedes ver lo que le enviaste.</p>` : ''}
+                ${s.concretada_en ? html`<p class="fila__detalle">🎉 Adopción concretada el ${s.concretada_en}.${s.entrega && s.entrega.ruac ? ` Folio RUAC: ${s.entrega.ruac}.` : ' Recuerda registrarlo en el RUAC.'}${s.entrega && s.entrega.esterilizar_antes ? ` Esterilización comprometida antes del ${s.entrega.esterilizar_antes}.` : ''}</p>
+                  ${s.seguimientos.length ? html`<ul class="seguimiento">${s.seguimientos.map((x) => html`<li class="${x.realizado_en ? 'hecho' : ''}"><span>${ETAPAS[x.etapa]}</span><span>${x.realizado_en ? `✓ ${RESULTADOS[x.resultado]}` : `El refugio te contactará el ${x.programado}`}</span></li>`)}</ul>` : ''}`
+    : s.cita_fecha ? tablaCita(s, 'adoptante')
+      : s.estado === 'aprobada' ? html`<p class="fila__detalle">✅ El refugio aprobó tu solicitud y agendará tu cita pronto.</p>` : ''}
+                ${s.visita && !s.concretada_en ? html`<p class="fila__detalle">🏠 Visita domiciliaria: ${s.visita === 'realizada' ? `realizada el ${s.visita_en}` : 'no fue necesaria'}.</p>` : ''}
+                ${resumenEnviado(s, 'Lo que enviaste al refugio', sinRespuesta && s.id === foco)}
+                ${conversacion(s, s.id === foco)}
+                <p class="acciones acciones--compactas">
+                  ${['pendiente', 'aprobada'].includes(s.estado) && !s.concretada_en ? html`<button class="enlace enlace--peligro" type="button" data-cancelar-sol="${s.id}">Retirar solicitud</button> ·` : ''}
+                  <button class="enlace" type="button" data-reportar-refugio="${s.refugio_id}">Reportar refugio</button>
+                </p>
+              </div>
+            </li>`;
+      })}</ul>`}
+        </div>
+      </section>`,
+      montar(raiz) {
+        montarConversaciones(raiz);
+        enfocarSolicitud(raiz, foco);
+        $$('[data-cancelar-sol]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const ok = await dialogo({
+            titulo: '¿Retirar tu solicitud?', texto: 'El refugio recibirá un aviso. Podrás volver a solicitar si el perro sigue disponible.', confirmar: 'Retirar', peligro: true,
+            accion: () => api(`/solicitudes/${b.dataset.cancelarSol}/cancelar`, { metodo: 'POST' }),
+          });
+          if (ok) { aviso('Solicitud retirada.'); navegar(); }
+        }));
+        $$('[data-reportar-refugio]', raiz).forEach((b) => b.addEventListener('click', () => reportar('refugio', Number(b.dataset.reportarRefugio))));
+      },
+    };
+  }
+
+  /* ======================= 12. Vistas del Refugio ======================= */
+  const subnavRefugio = (actual) => html`
+    <nav class="pestanas" aria-label="Secciones del refugio">
+      ${[['#/refugio', 'Mis animales'], ['#/refugio/solicitudes', 'Solicitudes'], ['#/refugio/estadisticas', 'Estadísticas'], ['#/refugio/perfil', 'Perfil']]
+    .map(([h, t]) => html`<a class="pestana" href="${h}"${si(h === actual, 'aria-current="page"')}>${t}</a>`)}
+    </nav>`;
+
+  /* ---------- Mis animales (RF-13, RF-14, RF-15, RF-23) ---------- */
+  /* Ficha de la mascota con todas sus solicitudes de adopción (vista del refugio) */
+  async function verMascota(animalId) {
+    let a; let sols; let cat;
+    try {
+      [a, sols, cat] = await Promise.all([
+        api(`/refugio/animales/${animalId}`),
+        api(`/refugio/solicitudes?animal_id=${animalId}`).then((r) => r.solicitudes),
+        catalogos(),
+      ]);
+    } catch (e) { aviso(textoError(e, 'No se pudo cargar la ficha. Intente de nuevo.'), 'error'); return; }
+    const nombreCat = (lista, id) => (lista.find((x) => x.id === Number(id)) || {}).nombre || '';
+    const pendientes = sols.filter((x) => x.estado === 'pendiente').length;
+    const ir = await dialogo({
+      titulo: a.nombre,
+      ancho: true,
+      cuerpo: html`
+        <div class="mini-ficha">
+          <div class="tarjeta__foto">${imagenAnimal(a)}</div>
+          <div>
+            <p class="ficha__raza">${nombreRaza(a)}</p>
+            <div class="ficha__chips">
+              ${insignia(a.estado, ETQ[a.estado])}
+              <span class="insignia">${nombreCat(cat.edad, a.edad_id)}</span>
+              <span class="insignia">${nombreCat(cat.tamano, a.tamano_id)}</span>
+              ${a.peso_kg ? html`<span class="insignia">${Number(a.peso_kg)} kg · ${a.altura_cm} cm</span>` : ''}
+              <span class="insignia">${Number(a.esterilizado) ? 'Esterilizado' : 'Sin esterilizar'}</span>
+            </div>
+            <p><strong>Ingreso:</strong> ${a.fecha_ingreso} · <strong>Publicado:</strong> ${String(a.publicado_en).slice(0, 10)}</p>
+            <p><strong>Salud:</strong> ${CAMPOS_SALUD.filter((c) => a[c]).map((c) => etiquetaOpcion(cat, c, a[c])).join(' · ') || a.salud || 'Sin información.'}</p>
+            <p><strong>Temperamento:</strong> ${CAMPOS_TEMP.filter((c) => a[c]).map((c) => `${cat.animal[c].titulo}: ${etiquetaOpcion(cat, c, a[c]).toLowerCase()}`).join(' · ') || a.temperamento || 'Sin información.'}</p>
+            <p><strong>Vacunas:</strong> ${a.vacunas.length ? a.vacunas.map((v) => `${v.nombre} (${v.fecha})`).join(', ') : 'Ninguna registrada'}</p>
+            <p><strong>Requisitos:</strong> ${a.requisitos.length ? a.requisitos.map((r) => r.nombre).join(', ') : 'Ninguno'}</p>
+          </div>
+        </div>
+        <h3 class="fila__titulo">Solicitudes de adopción (${sols.length})</h3>
+        ${!sols.length ? html`<p class="vacio">Esta mascota aún no tiene solicitudes.</p>` : html`
+        <ul class="filas">${sols.map((x) => html`
+          <li class="fila fila--sin-imagen">
+            <div>
+              <p class="fila__titulo">${x.adoptante}</p>
+              <p class="fila__meta">${x.adoptante_correo}${x.adoptante_telefono ? ` · Tel. ${x.adoptante_telefono}` : ''} · Enviada ${x.enviada}</p>
+              ${x.motivo_rechazo ? html`<p class="fila__detalle">Motivo: ${x.motivo_rechazo}</p>` : ''}
+              ${x.concretada_en ? html`<p class="fila__detalle">Adopción concretada el ${x.concretada_en}</p>`
+    : x.cita_fecha ? tablaCita(x, 'refugio') : ''}
+              ${resumenEnviado(x, 'Formato de adopción')}
+              ${x.mensajes.length ? html`<p class="fila__meta">${x.mensajes.length} mensaje(s) · <a class="enlace" href="#/refugio/solicitudes?id=${x.id}">Abrir conversación</a></p>` : ''}
+            </div>
+            <div class="fila__lado">${insignia(x.estado, ETQ[x.estado])}</div>
+          </li>`)}</ul>`}`,
+      confirmar: pendientes ? `Responder pendientes (${pendientes})` : 'Ir a solicitudes',
+      cancelar: 'Cerrar',
+    });
+    if (ir) location.hash = `#/refugio/solicitudes?animal_id=${animalId}`;
+  }
+
+  async function vistaRefugio(ctx) {
+    const lista = await api('/refugio/animales');
+    const ver = ctx.query.get('ver') === 'adoptados' ? 'adoptado' : 'disponible';
+    const filtrados = lista.filter((a) => a.estado === ver);
+    const pie = (a) => html`
+      <div class="tarjeta__pie">
+        ${insignia(a.estado, ETQ[a.estado])}
+        ${Number(a.activas) ? html`<span class="insignia">${a.activas} activas</span>` : ''}
+      </div>
+      <div class="tarjeta__editar acciones acciones--centro">
+        <button class="boton-contorno boton-contorno--chico boton-contorno--relleno" type="button" data-ver="${a.id}">Ver ficha y solicitudes</button>
+        ${a.estado === 'disponible' ? html`<a class="boton-contorno boton-contorno--chico" href="#/refugio/animal/${a.id}">Editar</a>` : ''}
+        <button class="boton-contorno boton-contorno--chico" type="button" data-estado="${a.id}">${a.estado === 'disponible' ? 'Adoptado' : 'Disponible'}</button>
+        ${a.estado === 'disponible' ? html`<button class="boton-contorno boton-contorno--chico boton-contorno--peligro" type="button" data-eliminar="${a.id}">Eliminar</button>`
+    : html`<button class="boton-contorno boton-contorno--chico" type="button" data-cerrar="${a.id}">Cerrar solicitudes</button>`}
+      </div>`;
+    return {
+      html: html`
+      <section class="principal">
+        <h1 class="titulo-pagina">Mis animales</h1>
+        ${subnavRefugio('#/refugio')}
+        <div class="acciones acciones--centro">
+          <a class="pestana" href="#/refugio"${si(ver === 'disponible', 'aria-current="page"')}>Disponibles (${lista.filter((a) => a.estado === 'disponible').length})</a>
+          <a class="pestana" href="#/refugio?ver=adoptados"${si(ver === 'adoptado', 'aria-current="page"')}>Adoptados (${lista.filter((a) => a.estado === 'adoptado').length})</a>
+          <a class="boton-contorno boton-contorno--relleno" href="#/refugio/animal/nuevo">Registrar un perro</a>
+        </div>
+        <br>
+        ${filtrados.length ? html`<ul class="catalogo">${filtrados.map((a) => tarjetaAnimal(a, { enlace: false, pie: pie(a) }))}</ul>`
+    : html`<div class="vacio contenedor contenedor--estrecho">${seguro(SVG_MESTIZO)}${ver === 'disponible' ? 'Aún no tienes animales disponibles. ¡Publica el primero!' : 'Todavía no hay adopciones registradas.'}</div>`}
+      </section>`,
+      montar(raiz) {
+        const buscar = (id) => lista.find((a) => a.id === Number(id));
+        $$('[data-ver]', raiz).forEach((b) => b.addEventListener('click', () => verMascota(b.dataset.ver)));
+        $$('[data-estado]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const a = buscar(b.dataset.estado);
+          const nuevo = a.estado === 'disponible' ? 'adoptado' : 'disponible';
+          if (nuevo === 'adoptado') {
+            // La entrega se registra desde la solicitud aprobada (protocolo: visita y lista de entrega)
+            const r = await api(`/refugio/solicitudes?animal_id=${a.id}`);
+            const s = r.solicitudes.find((x) => x.estado === 'aprobada' && !x.concretada_en);
+            if (!s) { aviso(`${a.nombre} no tiene una solicitud aprobada. Aprueba una solicitud antes de registrar la adopción.`, 'error'); return; }
+            if (await entregar(s)) navegar();
+            return;
+          }
+          const ok = await dialogo({
+            titulo: `Cambiar a ${ETQ[nuevo]}`,
+            texto: nuevo === 'adoptado'
+              ? `Se concreta la adopción con la solicitud aprobada de ${a.nombre}. Saldrá del catálogo y las demás solicitudes se rechazarán con el motivo “El animal ya fue adoptado”.`
+              : `${a.nombre} volverá a aparecer en el catálogo y la adopción registrada se revertirá.`,
+            cuerpo: nuevo === 'adoptado'
+              ? html`<label class="campo"><span class="campo__etiqueta">Fecha de concreción</span><input class="campo__entrada" type="date" name="fecha" max="${hoyCDMX()}" value="${hoyCDMX()}"></label>`
+              : '',
+            confirmar: 'Guardar',
+            accion: (f) => {
+              if (nuevo === 'adoptado' && (!f.fecha.value || f.fecha.value > hoyCDMX())) fallo('La fecha de concreción debe estar entre la fecha de aprobación y hoy.');
+              return api(`/refugio/animales/${a.id}/estado`, { metodo: 'POST', datos: { estado: nuevo, fecha: nuevo === 'adoptado' ? f.fecha.value : undefined } });
+            },
+          });
+          if (ok) { aviso('Estado actualizado.'); navegar(); }
+        }));
+        $$('[data-eliminar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const a = buscar(b.dataset.eliminar);
+          const ok = await dialogo({
+            titulo: `¿Eliminar a ${a.nombre}?`, texto: 'La publicación saldrá del catálogo. Su registro se conserva para tus estadísticas.',
+            confirmar: 'Eliminar', peligro: true,
+            accion: () => api(`/refugio/animales/${a.id}`, { metodo: 'DELETE' }),
+          });
+          if (ok) { aviso('Publicación eliminada.'); navegar(); }
+        }));
+        $$('[data-cerrar]', raiz).forEach((b) => b.addEventListener('click', async () => {
+          const a = buscar(b.dataset.cerrar);
+          const ok = await dialogo({
+            titulo: 'Cerrar solicitudes', texto: `Las solicitudes pendientes de ${a.nombre} pasarán a Rechazada con el motivo “El animal ya fue adoptado”.`,
+            accion: async () => { const r = await api(`/refugio/animales/${a.id}/cerrar-solicitudes`, { metodo: 'POST' }); aviso(r.mensaje); },
+          });
+          if (ok) navegar();
+        }));
+      },
+    };
+  }
+
+  /* ---------- RF-12 / RF-13: publicar o editar un animal ---------- */
+  const filaRequisito = (cat, r = {}) => html`
+    <div class="repetible__fila">
+      <input class="campo__entrada" name="req_nombre" type="text" maxlength="100" placeholder="Ej. Copia de INE" value="${r.nombre || ''}" aria-label="Nombre del requisito">
+      <select class="campo__entrada" name="req_tipo" aria-label="Tipo de requisito">${opciones(cat.tipo_requisito, r.tipo_id, 'Tipo')}</select>
+      <button class="boton-icono" type="button" data-quitar aria-label="Quitar">${ICONO.quitar}</button>
+    </div>`;
+  /* Documentos de la lista cerrada (catálogo "documento"): el refugio solo marca los que pide */
+  const listaDocumentos = (cat, actuales = []) => {
+    const elegidos = actuales.filter((r) => !Number(r.otro)).map((r) => r.nombre);
+    const activos_ = activos(cat.documento || []).map((d) => d.nombre);
+    const extra = elegidos.filter((n) => !activos_.includes(n)); // ya elegidos aunque el admin los haya desactivado
+    return html`<div class="documentos" data-documentos>${[...activos_, ...extra].map((n) => html`
+      <label class="documento"><input type="checkbox" data-doc value="${n}"${si(elegidos.includes(n), 'checked')}><span>${n}</span></label>`)}</div>`;
+  };
+
+  /* Dimensiones: mismas reglas que el servidor (public/reglas.js), con curva de crecimiento por meses */
+  function rangoDims(cat, raza, aprox, tamanoNombre) {
+    const rg = Reglas.rango(raza, tamanoNombre, cat.dims.razas, RAZA[raza] && RAZA[raza].nombre);
+    if (!rg) return null;
+    const parecido = raza === 'mestizo' && aprox && cat.dims.razas[aprox];
+    return { ...rg, parecido: parecido || null };
+  }
+
+  /* Vacunas del catálogo con casilla y fecha de aplicación (opción múltiple, máx. 10) */
+  const listaVacunas = (cat, actuales = []) => {
+    const activas = activos(cat.vacuna || []).map((v) => v.nombre);
+    const extra = actuales.map((v) => v.nombre).filter((n) => !activas.includes(n)); // vacunas antiguas o desactivadas ya registradas
+    return html`<div class="vacunas" data-vacunas>${[...activas, ...extra].map((n) => {
+      const v = actuales.find((x) => x.nombre === n);
+      return html`
+        <div class="vacuna ${v ? 'vacuna--activa' : ''}">
+          <label class="vacuna__nombre"><input type="checkbox" data-vac value="${n}"${si(v, 'checked')}><span>${n}</span></label>
+          <input class="campo__entrada" type="date" data-vac-fecha min="2000-01-01" max="${hoyCDMX()}" value="${v ? v.fecha : ''}" aria-label="Fecha de aplicación: ${n}"${si(!v, 'disabled')}>
+        </div>`;
+    })}</div>`;
+  };
+
+  async function vistaFormAnimal(ctx) {
+    const cat = await catalogos(true);
+    if (!cat.animal || !cat.vacuna) throw new ErrorApi(500, 'El servidor no tiene la versión más reciente de Dopta. Detén el servidor (Ctrl + C) y vuelve a ejecutar npm start.');
+    const id = ctx.params.id ? idValido(ctx.params.id) : null;
+    let a = {};
+    if (ctx.params.id && !id) return vista404();
+    if (id) {
+      try { a = await api(`/refugio/animales/${id}?editar=1`); } catch (e) {
+        if ([403, 404, 409].includes(e.status)) { aviso(e.message, 'error'); location.replace('#/refugio'); return ''; }
+        throw e;
+      }
+    }
+    const hoy = hoyCDMX();
+    return {
+      html: html`
+      <section class="principal principal--cuenta">
+        <div class="contenedor">
+          ${botonRegresar('#/refugio')}
+          <section class="panel panel--ancho">
+            <h1 class="panel__titulo">${id ? `Editar a ${a.nombre}` : 'Agregar mascota al catálogo'}</h1>
+            <form class="formulario formulario--dos" novalidate data-animal>
+              <div class="campo"><label class="campo__etiqueta" for="nombre">Nombre de la mascota</label>
+                <input class="campo__entrada" id="nombre" name="nombre" type="text" maxlength="30" placeholder="Ej. Luna" value="${a.nombre || ''}" required></div>
+              <div class="campo"><label class="campo__etiqueta" for="fecha_ingreso">Fecha de ingreso al refugio</label>
+                <input class="campo__entrada" id="fecha_ingreso" name="fecha_ingreso" type="date" min="2000-01-01" max="${hoy}" value="${a.fecha_ingreso || hoy}" required></div>
+              ${selectorRazas(a.raza || '', a.raza_aprox || '')}
+              <div class="campo"><label class="campo__etiqueta" for="edad">Edad</label>
+                <select class="campo__entrada" id="edad" name="edad_id">${opciones(cat.edad, a.edad_id, 'Selecciona la edad')}</select></div>
+              <div class="campo"><label class="campo__etiqueta" for="tamano">Tamaño</label>
+                <select class="campo__entrada" id="tamano" name="tamano_id">${opciones(cat.tamano, a.tamano_id, 'Selecciona el tamaño')}</select>
+                <span class="campo__ayuda" data-tamano-ayuda aria-live="polite"></span></div>
+              <div class="campo"><label class="campo__etiqueta" for="peso">Peso (kg)</label>
+                <input class="campo__entrada campo__entrada--numero" id="peso" name="peso_kg" type="number" inputmode="decimal" min="0.3" max="100" step="0.1" value="${a.peso_kg ?? ''}" placeholder="Ej. 12.5" required></div>
+              <div class="campo"><label class="campo__etiqueta" for="altura">Altura a la cruz (cm)</label>
+                <input class="campo__entrada campo__entrada--numero" id="altura" name="altura_cm" type="number" inputmode="numeric" min="8" max="110" step="1" value="${a.altura_cm ?? ''}" placeholder="Ej. 45" required></div>
+              <p class="campo__ayuda campo--ancho dims-ayuda" data-dims-ayuda aria-live="polite">Elige la raza y la edad para sugerir el peso y la altura.</p>
+              <p class="seccion-form">Estado de salud</p>
+              ${CAMPOS_SALUD.map((c) => html`<div class="campo campo--ancho">${grupoCerrado(cat, c, a[c])}</div>`)}
+              <p class="seccion-form">Temperamento</p>
+              ${CAMPOS_TEMP.map((c) => html`<div class="campo campo--ancho">${grupoCerrado(cat, c, a[c])}</div>`)}
+
+              <p class="seccion-form">Esterilización</p>
+              <div class="campo"><span class="campo__etiqueta">¿Está esterilizado?</span>
+                <div class="pregunta__opciones">
+                  <label class="opcion"><input type="radio" name="esterilizado" value="si"${si(Number(a.esterilizado) === 1, 'checked')}><span class="opcion__texto">Sí</span></label>
+                  <label class="opcion"><input type="radio" name="esterilizado" value="no"${si(Number(a.esterilizado) !== 1, 'checked')}><span class="opcion__texto">No</span></label>
+                </div></div>
+              <div class="campo"><span class="campo__etiqueta">¿Está desparasitado?</span>
+                <div class="pregunta__opciones">
+                  <label class="opcion"><input type="radio" name="desparasitado" value="si"${si(Number(a.desparasitado) === 1, 'checked')}><span class="opcion__texto">Sí</span></label>
+                  <label class="opcion"><input type="radio" name="desparasitado" value="no"${si(Number(a.desparasitado) !== 1, 'checked')}><span class="opcion__texto">No</span></label>
+                </div><span class="campo__ayuda">Debe estarlo al momento de la entrega.</span></div>
+              <div class="campo" data-fecha-est${si(Number(a.esterilizado) !== 1, 'hidden')}><label class="campo__etiqueta" for="fecha_est">Fecha de esterilización</label>
+                <input class="campo__entrada" id="fecha_est" name="fecha_esterilizacion" type="date" min="2000-01-01" max="${hoy}" value="${a.fecha_esterilizacion || ''}"></div>
+
+              <p class="seccion-form">Vacunas <span class="campo__ayuda">(marca las aplicadas y su fecha · hasta 10)</span></p>
+              <div class="campo campo--ancho">${listaVacunas(cat, a.vacunas || [])}</div>
+
+              <p class="seccion-form">Requisitos de adopción <span class="campo__ayuda">(marca los documentos que pides · hasta 10 · se entregan en persona en la cita)</span></p>
+              <div class="campo campo--ancho">${listaDocumentos(cat, a.requisitos || [])}</div>
+              <div class="campo campo--ancho"><span class="campo__etiqueta">Otro requisito <span class="opcional">(si no está en la lista · hasta 3)</span></span>
+                <div class="repetible" data-requisitos>${(a.requisitos || []).filter((r) => Number(r.otro)).map((r) => filaRequisito(cat, r))}</div>
+                <div class="acciones"><button class="boton-contorno boton-contorno--chico" type="button" data-agregar="requisitos">Agregar otro requisito</button></div>
+                <span class="campo__ayuda">Texto: datos personales (nombre, dirección, teléfono). Documental: documentos o imágenes.</span></div>
+
+              <p class="mensaje mensaje--error campo--ancho" data-error role="alert"></p>
+              <div class="panel__acciones campo--ancho"><button class="boton-contorno boton-contorno--relleno" type="submit">${id ? 'Guardar cambios' : 'Publicar mascota'}</button></div>
+            </form>
+          </section>
+        </div>
+      </section>`,
+      montar(raiz) {
+        const f = $('[data-animal]', raiz);
+        montarRazas(f);
+        montarContadores(f);
+        const limite = 'Solo se permiten hasta 10 requisitos o hasta 10 vacunas.';
+        /* Tamaño según la raza: en raza pura se asigna solo y se bloquea; en mestizo se sugiere el de la raza parecida */
+        const selTam = $('#tamano', f);
+        const ayudaTam = $('[data-tamano-ayuda]', f);
+        let tamanoManual = !!a.tamano_id && a.raza === 'mestizo';
+        const tamanoDe = (razaId) => {
+          const r = RAZA[razaId];
+          const t = r && activos(cat.tamano).find((x) => sinAcentos(x.nombre) === sinAcentos(r.tamano));
+          return t ? String(t.id) : '';
+        };
+        const sincronizarTamano = () => {
+          const raza = ($('input[name="raza"]:checked', f) || {}).value || '';
+          const aprox = ($('input[name="raza_aprox"]:checked', f) || {}).value || '';
+          const fijo = raza && raza !== 'mestizo' ? tamanoDe(raza) : '';
+          selTam.disabled = !!fijo;
+          selTam.classList.toggle('campo__entrada--fijo', !!fijo);
+          if (fijo) {
+            selTam.value = fijo;
+            ayudaTam.textContent = `Asignado automáticamente: un ${RAZA[raza].nombre} siempre es de tamaño ${selTam.selectedOptions[0].textContent}.`;
+          } else if (raza === 'mestizo') {
+            const sug = tamanoDe(aprox);
+            if (sug && !tamanoManual) selTam.value = sug;
+            ayudaTam.textContent = sug ? `Sugerido por su parecido a ${RAZA[aprox].nombre}. Puedes cambiarlo.` : 'Elige el tamaño según su peso y altura.';
+          } else ayudaTam.textContent = '';
+        };
+        selTam.addEventListener('change', () => { tamanoManual = true; });
+        f.addEventListener('change', (e) => { if (e.target.name === 'raza' || e.target.name === 'raza_aprox') { if (e.target.name === 'raza') tamanoManual = false; sincronizarTamano(); } });
+        sincronizarTamano();
+
+        /* Peso y altura: se sugieren según raza, edad y tamaño hasta que el refugio los cambie a mano */
+        const inPeso = $('#peso', f);
+        const inAltura = $('#altura', f);
+        const ayudaDims = $('[data-dims-ayuda]', f);
+        let dimsManual = !!(a.peso_kg && a.altura_cm);
+        const contexto = () => {
+          const raza = ($('input[name="raza"]:checked', f) || {}).value || '';
+          const aprox = ($('input[name="raza_aprox"]:checked', f) || {}).value || '';
+          const tam = selTam.value ? selTam.selectedOptions[0].textContent : '';
+          const edad = $('#edad', f).value ? $('#edad', f).selectedOptions[0].textContent : '';
+          return { r: rangoDims(cat, raza, aprox, tam), meses: Reglas.mesesDeEdad(edad) };
+        };
+        const sincronizarDims = (forzar = false) => {
+          const { r, meses } = contexto();
+          if (!r) { ayudaDims.textContent = 'Elige la raza (y el tamaño si es mestizo) para sugerir el peso y la altura.'; return; }
+          const l = Reglas.limites(r, meses);
+          const sug = Reglas.sugerido(r, meses, r.parecido);
+          if (!dimsManual || forzar) { inPeso.value = sug.peso; inAltura.value = sug.altura; }
+          ayudaDims.innerHTML = String(html`📏 Típico de ${r.base} adulto: <strong>${r.peso[0]}–${r.peso[1]} kg</strong> y <strong>${r.altura[0]}–${r.altura[1]} cm</strong>.
+            ${l.adulto ? '' : `A los ${meses} ${meses === 1 ? 'mes' : 'meses'} se acepta de ${l.peso[0]} a ${l.peso[1]} kg y de ${l.altura[0]} a ${l.altura[1]} cm. `}
+            ${dimsManual ? html`<button class="enlace" type="button" data-dims-sugerir>Usar ${sug.peso} kg y ${sug.altura} cm</button>` : 'Valores sugeridos: ajústalos si lo pesaste o mediste.'}`);
+        };
+        [inPeso, inAltura].forEach((x) => x.addEventListener('input', () => { dimsManual = true; }));
+        f.addEventListener('change', (e) => { if (['raza', 'raza_aprox', 'edad_id', 'tamano_id'].includes(e.target.name)) sincronizarDims(); });
+        f.addEventListener('click', (e) => { if (e.target.closest('[data-dims-sugerir]')) { dimsManual = false; sincronizarDims(true); } });
+        sincronizarDims();
+        $$('[data-doc]', f).forEach((c) => c.addEventListener('change', () => {
+          if (c.checked && $$('[data-doc]:checked', f).length + $('[data-requisitos]', f).children.length > 10) { c.checked = false; errorEn(f, limite); }
+        }));
+        $$('[data-agregar]', f).forEach((b) => b.addEventListener('click', () => {
+          const caja = $(`[data-${b.dataset.agregar}]`, f);
+          if (caja.children.length >= 3) return errorEn(f, 'Puede agregar hasta 3 requisitos en "Otro".');
+          if (caja.children.length + $$('[data-doc]:checked', f).length >= 10) return errorEn(f, limite);
+          caja.insertAdjacentHTML('beforeend', String(filaRequisito(cat)));
+          $('input', caja.lastElementChild).focus();
+        }));
+        f.addEventListener('click', (e) => { const q = e.target.closest('[data-quitar]'); if (q) q.closest('.repetible__fila').remove(); });
+        $$('[data-vac]', f).forEach((c) => c.addEventListener('change', () => {
+          if (c.checked && $$('[data-vac]:checked', f).length > 10) { c.checked = false; return errorEn(f, limite); }
+          const fila = c.closest('.vacuna');
+          const fecha = $('[data-vac-fecha]', fila);
+          fila.classList.toggle('vacuna--activa', c.checked);
+          fecha.disabled = !c.checked;
+          if (c.checked) fecha.focus(); else fecha.value = '';
+        }));
+        f.addEventListener('change', (e) => { if (e.target.name === 'esterilizado') $('[data-fecha-est]', f).hidden = e.target.value !== 'si'; });
+
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          errorEn(f, '');
+          let datos;
+          try {
+            const d = datosForm(f);
+            const raza = ($('input[name="raza"]:checked', f) || {}).value;
+            const aprox = ($('input[name="raza_aprox"]:checked', f) || {}).value || null;
+            if (!V.entre(d.nombre, 2, 30) || !V.nombre(d.nombre)) fallo('El nombre del perro debe tener de 2 a 30 caracteres, solo letras y espacios.');
+            revisarNombre(d.nombre, 'perro');
+            if (!raza) fallo('Seleccione la raza del animal.');
+            if (!d.edad_id) fallo('Seleccione la edad del animal.');
+            d.tamano_id = $('#tamano', f).value; // puede estar bloqueado (raza pura): se lee directo del selector
+            if (!d.tamano_id) fallo('Seleccione el tamaño del animal.');
+            const cerrados = {};
+            [...CAMPOS_SALUD, ...CAMPOS_TEMP].forEach((c) => {
+              if (!d[c]) fallo(`Seleccione una opción en “${cat.animal[c].titulo}”.`);
+              cerrados[c] = d[c];
+            });
+            // Coherencia: fechas no futuras, no antes del 2000 ni antes del nacimiento estimado por la edad elegida
+            const edadNombre = (cat.edad.find((x) => x.id === Number(d.edad_id)) || {}).nombre || '';
+            const nacimiento = nacimientoMinimo(edadNombre, hoyCDMX());
+            const pasada = (fecha, que) => {
+              if (!fecha || fecha > hoyCDMX()) fallo('La fecha debe ser igual o anterior a la fecha de hoy.');
+              if (fecha < '2000-01-01') fallo(`La fecha de ${que} no puede ser anterior al año 2000.`);
+              if (nacimiento && fecha < nacimiento) fallo(`La fecha de ${que} (${fecha}) es anterior al nacimiento estimado por su edad (${edadNombre}). Revise la fecha o la edad.`);
+            };
+            pasada(d.fecha_ingreso, 'ingreso');
+            // Peso y altura coherentes con la raza (o el tamaño) y la edad
+            const peso = Number(d.peso_kg);
+            const altura = Number(d.altura_cm);
+            const { r: rd, meses } = contexto();
+            const pd = Reglas.problema(d.peso_kg === '' ? NaN : peso, d.altura_cm === '' ? NaN : altura, rd, meses);
+            if (pd) fallo(pd);
+            const documentos = $$('[data-doc]:checked', f).map((c) => ({ nombre: c.value, otro: false }));
+            const otros = $$('[data-requisitos] .repetible__fila', f).map((r) => {
+              const nombre = $('[name="req_nombre"]', r).value.trim().replace(/\s+/g, ' ');
+              const tipo = Number($('[name="req_tipo"]', r).value);
+              if (!V.entre(nombre, 3, 100) || !V.letras(nombre, 3) || !tipo) fallo('Cada requisito "Otro" debe tener de 3 a 100 caracteres, con letras, y un tipo Texto o Documental.');
+              revisarTexto(nombre, { min: 3, max: 100, campo: 'Cada requisito', lineas: 1 });
+              return { nombre, tipo_id: tipo, otro: true };
+            });
+            if (otros.length > 3) fallo('Puede agregar hasta 3 requisitos en "Otro".');
+            const requisitos = [...documentos, ...otros];
+            const nombresReq = requisitos.map((x) => x.nombre.toLowerCase());
+            if (new Set(nombresReq).size !== nombresReq.length) fallo('Hay requisitos repetidos. Cada requisito debe aparecer una sola vez.');
+            const vacunas = $$('[data-vac]:checked', f).map((c) => {
+              const fecha = $('[data-vac-fecha]', c.closest('.vacuna')).value;
+              if (!fecha) fallo(`Indique la fecha de aplicación de “${c.value}”.`);
+              pasada(fecha, `la vacuna ${c.value}`);
+              return { nombre: c.value, fecha };
+            });
+            if (requisitos.length > 10 || vacunas.length > 10) fallo(limite);
+            const ester = d.esterilizado === 'si';
+            if (ester) { if (!d.fecha_esterilizacion) fallo('Ingrese la fecha de esterilización.'); pasada(d.fecha_esterilizacion, 'esterilización'); }
+            datos = {
+              nombre: d.nombre, raza, raza_aprox: raza === 'mestizo' ? aprox : null, edad_id: Number(d.edad_id), tamano_id: Number(d.tamano_id),
+              ...cerrados, fecha_ingreso: d.fecha_ingreso, requisitos, vacunas, peso_kg: peso, altura_cm: altura,
+              esterilizado: ester, fecha_esterilizacion: ester ? d.fecha_esterilizacion : null, desparasitado: d.desparasitado === 'si',
+            };
+          } catch (err) { return errorEn(f, err.message); }
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            let r;
+            try {
+              r = await api(id ? `/refugio/animales/${id}` : '/refugio/animales', { metodo: id ? 'PUT' : 'POST', datos });
+            } catch (err) {
+              if (err.status !== 409 || err.datos.codigo !== 'REINICIO') throw err;
+              // Cambios fuertes con solicitudes activas: confirmar que se cancelan y se avisa a cada adoptante
+              const seguir = await dialogo({
+                titulo: 'Se cancelarán solicitudes', texto: err.message, confirmar: 'Guardar y cancelar solicitudes', peligro: true,
+                accion: async () => { r = await api(`/refugio/animales/${id}`, { metodo: 'PUT', datos: { ...datos, confirmar_reinicio: true } }); },
+              });
+              if (!seguir) { ocupado(b, false); return; }
+            }
+            aviso(r.mensaje);
+            location.hash = '#/refugio';
+          } catch (err) {
+            ocupado(b, false);
+            errorEn(f, textoError(err, 'No se pudo publicar el animal. Intente de nuevo.'));
+          }
+        });
+      },
+    };
+  }
