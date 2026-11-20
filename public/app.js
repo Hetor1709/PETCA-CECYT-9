@@ -949,3 +949,636 @@
       },
     };
   }
+
+  /* ---------- Cuestionario de compatibilidad ---------- */
+  function recomendar(r) {
+    let tamano;
+    if (r.jardin === 'no') tamano = r.tiempo === 'mucho' && r.energia === 'activos' ? 'Mediano' : 'Pequeño';
+    else tamano = r.tiempo === 'mucho' ? 'Grande' : 'Mediano';
+    let energia;
+    if (r.energia === 'activos') energia = r.tiempo === 'poco' ? 'media' : 'alta';
+    else energia = r.tiempo === 'mucho' ? 'media' : 'baja';
+    const ordenT = ['Pequeño', 'Mediano', 'Grande'];
+    const ordenE = ['baja', 'media', 'alta'];
+    const puntos = (raza) => {
+      let p = 0;
+      const dt = Math.abs(ordenT.indexOf(raza.tamano) - ordenT.indexOf(tamano));
+      const de = Math.abs(ordenE.indexOf(raza.energia) - ordenE.indexOf(energia));
+      p += dt === 0 ? 3 : dt === 1 ? 1 : -2;
+      p += de === 0 ? 3 : de === 1 ? 1 : -2;
+      if (raza.exigente && r.experiencia === 'no') p -= 3;
+      return p;
+    };
+    const razas = [...RAZAS].sort((x, y) => puntos(y) - puntos(x) || x.nombre.localeCompare(y.nombre)).slice(0, 3);
+    return { tamano, energia, razas };
+  }
+
+  function vistaCuestionario() {
+    const pregunta = (nombre, titulo, ops, def) => html`
+      <fieldset class="pregunta">
+        <legend class="pregunta__titulo">${titulo}</legend>
+        <div class="pregunta__opciones">
+          ${ops.map(([v, t]) => html`<label class="opcion"><input type="radio" name="${nombre}" value="${v}"${si(v === def, 'checked')}><span class="opcion__texto">${t}</span></label>`)}
+        </div>
+      </fieldset>`;
+    return {
+      html: html`
+      <section class="cuenta">
+        ${botonRegresar('#/', 'Atrás')}
+        <section class="cuenta__tarjeta cuestionario__tarjeta" aria-labelledby="titulo-cuestionario">
+          <h1 class="cuenta__titulo" id="titulo-cuestionario">¿Cuál es tu mascota ideal?</h1>
+          <p class="cuenta__subtitulo">Responde estas preguntas y descubre qué compañero de hogar es perfecto para ti.</p>
+          <form class="cuestionario" data-cuestionario>
+            <div class="cuestionario__preguntas">
+              ${pregunta('jardin', '¿Tienes jardín o patio?', [['si', 'Sí'], ['no', 'No']], 'si')}
+              ${pregunta('tiempo', '¿Cuánto tiempo puedes dedicar al cuidado?', [['poco', 'Poco'], ['medio', 'Medio'], ['mucho', 'Mucho']], 'medio')}
+              ${pregunta('experiencia', '¿Tienes experiencia con mascotas?', [['si', 'Sí'], ['no', 'No']], 'si')}
+              ${pregunta('energia', '¿Prefieres animales activos o tranquilos?', [['activos', 'Activos'], ['tranquilos', 'Tranquilos']], 'tranquilos')}
+            </div>
+            <div class="cuestionario__accion"><button class="boton-pastilla" type="submit">Descubrir mi mascota ideal</button></div>
+          </form>
+          <div data-resultado></div>
+        </section>
+      </section>`,
+      montar(raiz) {
+        const form = $('[data-cuestionario]', raiz);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const r = recomendar(datosForm(form));
+          const caja = $('[data-resultado]', raiz);
+          const energiaTxt = { baja: 'tranquila', media: 'moderada', alta: 'alta' }[r.energia];
+          caja.innerHTML = String(html`
+            <div class="resultado" role="status">
+              <h2>Tu perfil ideal</h2>
+              <p>Un perro de tamaño <strong data-tam>${r.tamano.toLowerCase()}</strong> con energía <strong>${energiaTxt}</strong>. Estas razas suelen encajar contigo:</p>
+              <div class="resultado__razas">${r.razas.map((x) => html`<a class="resultado__raza" href="#/?raza=${x.id}">${seguro(x.svg)}<span>${x.nombre}</span></a>`)}</div>
+              <p class="nota">Sugerencia orientativa: cada perro es único y muchos mestizos encajan con este perfil. Conócelo en el refugio antes de decidir.</p>
+              <div data-sugeridos></div>
+            </div>`);
+          caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          try {
+            const cat = await catalogos();
+            // Se busca por posición (1.º, 2.º, 3.º tamaño del catálogo) y no por nombre, por si el admin lo renombra
+            const pos = ['Pequeño', 'Mediano', 'Grande'].indexOf(r.tamano);
+            const t = [...cat.tamano].sort((x, y) => x.orden - y.orden || x.id - y.id)[pos];
+            if (t) $('[data-tam]', caja).textContent = t.nombre.toLowerCase();
+            const res = await api(conQuery('/animales', { tamano: t && t.id }));
+            const lista = res.animales.slice(0, 4);
+            if (lista.length) {
+              $('[data-sugeridos]', caja).innerHTML = String(html`<p><strong>Perros disponibles con ese tamaño:</strong></p><ul class="catalogo">${lista.map((a) => tarjetaAnimal(a))}</ul>`);
+            }
+          } catch { /* las sugerencias son opcionales */ }
+        });
+      },
+    };
+  }
+
+  /* ---------- Refugios: listado público ---------- */
+  async function vistaRefugios(ctx) {
+    const q = (ctx.query.get('q') || '').slice(0, 60);
+    return {
+      html: html`
+      <section class="principal">
+        <h1 class="titulo-pagina">Refugios</h1>
+        <form class="buscador" role="search" data-buscador>
+          <label class="sr-only" for="buscar-refugio">Buscar refugio</label>
+          <input class="buscador__campo" id="buscar-refugio" type="search" placeholder="Buscar por nombre o alcaldía" value="${q}" maxlength="60" autocomplete="off">
+          ${ICONO.lupa}
+        </form>
+        <div class="acciones acciones--centro"><button class="boton-contorno boton-contorno--chico" type="button" data-cercanos aria-pressed="false">${ICONO.ubicacion} Más cercanos a mí</button></div>
+        <p class="campo__ayuda centrado" data-cerca-estado aria-live="polite"></p>
+        <ul class="refugios contenedor" data-lista aria-busy="true"></ul>
+        <p class="buscador__vacio" data-vacio hidden>No encontramos refugios con esa búsqueda.</p>
+      </section>`,
+      montar(raiz) {
+        const campo = $('#buscar-refugio', raiz);
+        let n = 0;
+        let reloj;
+        let yo = null; // ubicación del usuario cuando pide "Más cercanos"
+        const cargar = async () => {
+          const k = ++n;
+          try {
+            let lista = await api(conQuery('/refugios', { q: campo.value.trim() }));
+            if (k !== n) return;
+            if (yo) {
+              lista = lista.map((r) => ({ ...r, km: r.lat != null ? distanciaKm(yo, r) : null }))
+                .sort((x, y) => (x.km ?? 1e9) - (y.km ?? 1e9));
+            }
+            $('[data-lista]', raiz).innerHTML = String(html`${lista.map(tarjetaRefugio)}`);
+            $('[data-vacio]', raiz).hidden = lista.length > 0;
+          } catch (e) { $('[data-vacio]', raiz).hidden = false; $('[data-vacio]', raiz).textContent = textoError(e, 'No se pudo cargar la lista. Intente de nuevo.'); }
+          $('[data-lista]', raiz).setAttribute('aria-busy', 'false');
+        };
+        campo.addEventListener('input', () => { clearTimeout(reloj); reloj = setTimeout(cargar, 280); });
+        $('[data-buscador]', raiz).addEventListener('submit', (e) => { e.preventDefault(); cargar(); });
+        const bc = $('[data-cercanos]', raiz);
+        const est = $('[data-cerca-estado]', raiz);
+        bc.addEventListener('click', async () => {
+          if (yo) { yo = null; bc.setAttribute('aria-pressed', 'false'); est.textContent = ''; cargar(); return; }
+          est.textContent = 'Obteniendo tu ubicación…';
+          try {
+            yo = await ubicacionActual();
+            bc.setAttribute('aria-pressed', 'true');
+            est.textContent = 'Ordenados por distancia en línea recta desde tu ubicación (≈ = aproximada por alcaldía). Tu ubicación no se guarda.';
+            cargar();
+          } catch (e) { est.textContent = e.message; }
+        });
+        cargar();
+      },
+    };
+  }
+
+  /* ---------- Perfil público del refugio ---------- */
+  async function vistaPerfilRefugio(ctx) {
+    const id = idValido(ctx.params.id);
+    if (!id) return vista404();
+    let r;
+    try { r = await api(`/refugios/${id}`); } catch (e) {
+      if (e.status === 404) return html`<section class="error"><img src="img/error-404.svg" alt="" width="150" height="157"><p class="error__codigo">Refugio no disponible</p><p class="error__texto">${e.message}</p><a class="boton-contorno" href="#/refugios">Ver refugios</a></section>`;
+      throw e;
+    }
+    const u = estado.usuario;
+    const abierto = abiertoAhora(r.horario);
+    const hoyDia = diaSemana(hoyCDMX());
+    return {
+      html: html`
+      <section class="principal">
+        <div class="contenedor">
+          ${botonRegresar('#/refugios')}
+          <div class="perfil-refugio">
+            <article class="panel perfil-refugio__info">
+              <img class="perfil-refugio__logo" src="img/logo-dopta.svg" alt="" width="72" height="65">
+              <h1 class="ficha__titulo">${r.nombre}</h1>
+              <p class="ficha__raza">${r.institucion}</p>
+              <div class="ficha__chips">
+                ${insignia(abierto ? 'disponible' : 'rechazada', abierto ? 'Abierto ahora' : 'Cerrado ahora')}
+                <span class="insignia">✔ Refugio verificado</span>
+              </div>
+              <div class="ficha__bloque">
+                <h2>Ubicación</h2>
+                <p>${r.direccion}${r.alcaldia ? `, ${r.alcaldia}` : ''}</p>
+                <p class="acciones"><a class="boton-contorno boton-contorno--chico" href="${mapaUrl(r, true)}" target="_blank" rel="noopener noreferrer">📍 Cómo llegar</a>
+                  <a class="boton-contorno boton-contorno--chico" href="tel:${r.telefono}">📞 ${r.telefono}</a></p>
+              </div>
+              <div class="ficha__bloque">
+                <h2>Horario de atención</h2>
+                <ul class="lista-simple horario-hoy">${r.horario.map((h) => html`
+                  <li class="${Number(h.dia) === hoyDia ? 'es-hoy' : ''}"><span>${DIAS[h.dia]}${Number(h.dia) === hoyDia ? ' (hoy)' : ''}</span><strong>${Number(h.cerrado) ? 'Cerrado' : `${h.abre} – ${h.cierra}`}</strong></li>`)}</ul>
+              </div>
+              ${u && u.tipo === 'adoptante' ? html`<p class="ficha__bloque"><button class="enlace" type="button" data-reportar-refugio>Reportar refugio</button></p>` : ''}
+            </article>
+            <div>
+              <div class="cifras perfil-refugio__cifras">
+                <article class="cifra cifra--durazno"><span class="cifra__numero">${r.animales.length}</span><span class="cifra__texto">perros en adopción</span></article>
+                <article class="cifra cifra--azul"><span class="cifra__numero">${r.adoptados}</span><span class="cifra__texto">adopciones logradas</span></article>
+              </div>
+              <h2 class="subtitulo-seccion">Perros en adopción</h2>
+              ${r.animales.length ? html`<ul class="catalogo perfil-refugio__catalogo">${r.animales.map((a) => tarjetaAnimal(a))}</ul>`
+    : html`<div class="vacio">${seguro(SVG_HUELLA)}Este refugio no tiene perros publicados por ahora.</div>`}
+            </div>
+          </div>
+        </div>
+      </section>`,
+      montar(raiz) {
+        const b = $('[data-reportar-refugio]', raiz);
+        if (b) b.addEventListener('click', () => reportar('refugio', r.id));
+      },
+    };
+  }
+
+  /* ---------- Sobre nosotros ---------- */
+  const vistaNosotros = () => html`
+    <div class="nosotros">
+      <section class="nosotros__seccion nosotros__heroe">
+        <div class="nosotros__contenedor">
+          <p class="nosotros__eyebrow">Sobre Dopta</p>
+          <h1 class="nosotros__titulo">Cada perrito merece una casa, y Dopta ayuda a encontrarla</h1>
+          <p class="nosotros__texto">Somos un catálogo digital gratuito de animales en adopción. Reunimos a los refugios de perros y a las personas que quieren adoptar en un solo lugar, sin intermediarios.</p>
+          <a class="boton-contorno" href="#/">Explorar mascotas</a>
+        </div>
+        <div class="nosotros__ilustracion" aria-hidden="true"><img src="img/logo-dopta.svg" alt="" width="180" height="162"></div>
+      </section>
+      <section class="nosotros__seccion">
+        <div class="nosotros__contenedor">
+          <div class="nosotros__cifras">
+            <article class="cifra cifra--azul"><span class="cifra__numero">Gratis</span><span class="cifra__texto">para refugios y adoptantes</span></article>
+            <article class="cifra cifra--durazno"><span class="cifra__numero">0%</span><span class="cifra__texto">de comisión por adopción</span></article>
+            <article class="cifra cifra--blanco"><span class="cifra__numero">Verificados</span><span class="cifra__texto">refugios revisados antes de publicar</span></article>
+          </div>
+        </div>
+      </section>
+      <section class="nosotros__seccion">
+        <div class="nosotros__contenedor">
+          <p class="nosotros__eyebrow">Cómo funciona</p>
+          <h2 class="nosotros__titulo">Tres pasos para conocer a tu compañero</h2>
+          <p class="nosotros__texto">No necesitas experiencia previa ni un plan complicado. El proceso empieza con una pregunta honesta sobre tu vida diaria y termina con una cita en el refugio, donde conoces al animal cara a cara.</p>
+          <ol class="nosotros__pasos">
+            <li class="paso"><span class="paso__numero">1</span><h3 class="paso__titulo">Explora el catálogo</h3><p class="paso__texto">Revisa las fichas de los animales y responde el test para saber qué mascota encaja contigo.</p></li>
+            <li class="paso"><span class="paso__numero">2</span><h3 class="paso__titulo">Crea tu cuenta</h3><p class="paso__texto">Regístrate como adoptante para enviar solicitudes y agendar tu cita en el refugio.</p></li>
+            <li class="paso"><span class="paso__numero">3</span><h3 class="paso__titulo">Conoce en persona</h3><p class="paso__texto">Los requisitos de adopción se entregan durante la cita, para que conozcas al animal cara a cara.</p></li>
+          </ol>
+        </div>
+      </section>
+      <section class="nosotros__seccion">
+        <div class="nosotros__contenedor">
+          <p class="nosotros__eyebrow">Nuestra historia</p>
+          <h2 class="nosotros__titulo">Por qué nace Dopta</h2>
+          <div class="nosotros__parrafos">
+            <p>Dopta nace de una idea sencilla: muchos perros esperan en refugios a que alguien los vea. Queremos que encontrarlos sea tan fácil como buscar cualquier otra cosa en internet, sin costos ocultos ni intermediarios.</p>
+            <p>Creemos que una adopción funciona mejor cuando la información es clara desde el primer momento: cómo es el animal, qué salud tiene, qué vacunas y esterilización le corresponden y qué requisitos pide el refugio. Por eso cada ficha reúne esos datos y cada refugio pasa por una verificación antes de publicar.</p>
+            <p>No vendemos animales ni cobramos comisiones. Dopta es un catálogo gratuito: el vínculo se construye entre el refugio y la persona, en la cita y no en la plataforma.</p>
+          </div>
+          <p class="nosotros__eyebrow">Lo que nos guía</p>
+          <h2 class="nosotros__titulo">Tres principios para cada adopción</h2>
+          <ol class="nosotros__pasos">
+            <li class="paso"><span class="paso__numero">1</span><h3 class="paso__titulo">Transparencia</h3><p class="paso__texto">Cada animal se muestra con su edad, tamaño, salud, vacunas y esterilización, para que decidas con información completa.</p></li>
+            <li class="paso"><span class="paso__numero">2</span><h3 class="paso__titulo">Gratuidad</h3><p class="paso__texto">Ni refugios ni adoptantes pagan por usar Dopta. No hay comisiones por adopción ni cobros ocultos.</p></li>
+            <li class="paso"><span class="paso__numero">3</span><h3 class="paso__titulo">Privacidad</h3><p class="paso__texto">Las contraseñas se guardan cifradas y tu correo solo lo ven el refugio de tu solicitud y el equipo de moderación.</p></li>
+          </ol>
+        </div>
+      </section>
+      <section class="nosotros__seccion">
+        <div class="nosotros__contenedor"><div class="nosotros__cta"><h2>¿Listo para encontrar a tu compañero?</h2><a class="boton-contorno" href="#/">Ver el catálogo</a></div></div>
+      </section>
+    </div>`;
+
+  /* ---------- Errores ---------- */
+  const vista404 = () => html`
+    <section class="error">
+      <img src="img/error-404.svg" alt="" width="150" height="157">
+      <p class="error__codigo">ERROR 404</p>
+      <p class="error__texto">Página no encontrada. Puede que la dirección esté mal escrita o que la página ya no exista.</p>
+      <a class="boton-contorno" href="${estado.panel}">Volver al inicio</a>
+    </section>`;
+  const vista500 = (detalle = 'Algo salió mal en nuestro servidor. Intenta de nuevo en unos minutos.', codigo = 'ERROR 500') => html`
+    <section class="error">
+      <img src="img/error-500.svg" alt="" width="150" height="231">
+      <p class="error__codigo">${codigo}</p>
+      <p class="error__texto">${detalle}</p>
+      <button class="boton-contorno" type="button" data-reintentar>Reintentar</button>
+    </section>`;
+
+  /* ======================= 11. Acceso y cuenta ======================= */
+  const tarjetaCuenta = (id, titulo, subtitulo, contenido, ancho = false) => html`
+    <section class="cuenta">
+      ${botonRegresar('#/')}
+      <section class="cuenta__tarjeta ${ancho ? 'cuestionario__tarjeta' : ''}" aria-labelledby="${id}">
+        <h1 class="cuenta__titulo" id="${id}">${titulo}</h1>
+        ${subtitulo ? html`<p class="cuenta__subtitulo">${subtitulo}</p>` : ''}
+        ${contenido}
+      </section>
+    </section>`;
+
+  const mensajeFlash = () => {
+    const f = estado.flash;
+    estado.flash = null;
+    return f ? html`<p class="mensaje ${f.tipo === 'error' ? 'mensaje--error' : ''}" role="status">${f.texto}</p>` : '';
+  };
+
+  /* ---------- RF-05: iniciar sesión ---------- */
+  function vistaLogin(ctx) {
+    return {
+      html: tarjetaCuenta('titulo-login', 'Iniciar Sesión', 'Ingresa a tu cuenta para adoptar o publicar mascotas', html`
+        <form class="formulario" novalidate data-login>
+          ${mensajeFlash()}
+          <div class="campo"><label class="campo__etiqueta" for="correo">Email</label>
+            <input class="campo__entrada" id="correo" name="correo" type="email" placeholder="tu@email.com" autocomplete="email" maxlength="254" required></div>
+          <div class="campo"><label class="campo__etiqueta" for="contrasena">Contraseña</label>
+            <input class="campo__entrada" id="contrasena" name="contrasena" type="password" placeholder="••••••••" autocomplete="current-password" maxlength="64" required></div>
+          <p class="mensaje mensaje--error" data-error role="alert"></p>
+          <button class="boton-contorno" type="submit">Ingresar</button>
+        </form>
+        <p class="cuenta__pie"><a href="#/recuperar">Olvidé mi contraseña</a></p>
+        <p class="cuenta__pie">¿No tienes cuenta? <a href="#/registro">Registrarse</a></p>`),
+      montar(raiz) {
+        const f = $('[data-login]', raiz);
+        f.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const d = datosForm(f);
+          d.contrasena = f.contrasena.value;
+          if (!V.correo(d.correo) || d.contrasena.length < 8 || d.contrasena.length > 64) return errorEn(f, 'Complete los campos con un formato válido.');
+          const b = $('button[type="submit"]', f);
+          ocupado(b);
+          try {
+            const r = await api('/auth/login', { metodo: 'POST', datos: d });
+            estado.usuario = r.usuario;
+            estado.panel = r.panel;
+            estado.perfil = null;
+            f.reset();
+            await actualizarYo();
+            const destino = rutaSegura(ctx.query.get('next'));
+            const permitido = destino && rutaPermitida(destino, r.usuario);
+            location.hash = permitido ? destino : r.panel;
+          } catch (err) {
+            ocupado(b, false);
+            f.contrasena.value = '';
+            if (err.datos && err.datos.codigo === 'RECHAZADA') {
+              estado.rechazado = d.correo;
+              location.hash = '#/verificacion-rechazada';
+              return;
+            }
+            errorEn(f, textoError(err, 'No se pudo iniciar sesión. Intente de nuevo en unos minutos.'));
+          }
+        });
+      },
+    };
+  }
+
+  /* Campos institucionales del Refugio (RF-04) compartidos por registro, revalidación y perfil */
+  const camposRefugio = (cat, d = {}, conInstitucion = true) => html`
+    ${conInstitucion ? html`<div class="campo"><label class="campo__etiqueta" for="institucion">Nombre de la institución</label>
+      <input class="campo__entrada" id="institucion" name="institucion" type="text" maxlength="120" value="${d.institucion || ''}" placeholder="Ej. Asociación Patitas A.C." required></div>` : ''}
+    <fieldset class="ubicacion campo--ancho" data-direccion>
+      <legend class="campo__etiqueta">Ubicación del refugio</legend>
+      <div class="campo direccion" data-buscador hidden><label class="campo__etiqueta" for="buscar-dir">Buscar dirección <span class="opcional">(llena los campos por ti)</span></label>
+        <div class="direccion__control">
+          <input class="campo__entrada" id="buscar-dir" type="search" maxlength="200" placeholder="Ej. Av. Universidad 1200" autocomplete="off"
+            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="direccion-lista">
+          <ul class="direccion__lista" id="direccion-lista" role="listbox" aria-label="Sugerencias de dirección" hidden></ul>
+        </div>
+        <button class="boton-contorno boton-contorno--chico ubicacion__actual" type="button" data-mi-ubicacion>${ICONO.ubicacion} Usar mi ubicación actual</button></div>
+      <div class="ubicacion__rejilla">
+        <div class="campo"><label class="campo__etiqueta" for="cp">Código postal <span class="paso-chico">1</span></label>
+          <input class="campo__entrada" id="cp" name="cp" type="text" inputmode="numeric" maxlength="5" pattern="\\d{5}" value="${d.cp || ''}" placeholder="03330" autocomplete="postal-code" required></div>
+        <div class="campo"><label class="campo__etiqueta" for="alcaldia-ver">Alcaldía</label>
+          <input class="campo__entrada campo__entrada--fijo" id="alcaldia-ver" type="text" readonly tabindex="-1" value="${d.alcaldia || ''}" placeholder="Se llena con el C.P.">
+          <input type="hidden" name="alcaldia_id" value="${d.alcaldia_id || ''}"></div>
+        <div class="campo ubicacion__colonia"><label class="campo__etiqueta" for="colonia">Colonia <span class="paso-chico">2</span></label>
+          <select class="campo__entrada" id="colonia" name="colonia" required data-colonia-actual="${d.colonia || ''}" disabled><option value="">Escribe primero el C.P.</option></select></div>
+        <div class="campo ubicacion__calle direccion"><label class="campo__etiqueta" for="calle">Calle <span class="paso-chico">3</span></label>
+          <div class="direccion__control">
+            <input class="campo__entrada" id="calle" name="calle" type="text" maxlength="100" value="${d.calle || ''}" placeholder="Ej. Av. Universidad" autocomplete="off" required
+              role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="calles-lista">
+            <ul class="direccion__lista" id="calles-lista" role="listbox" aria-label="Calles sugeridas" hidden></ul>
+          </div></div>
+        <div class="campo"><label class="campo__etiqueta" for="num_ext">Núm. exterior</label>
+          <input class="campo__entrada" id="num_ext" name="num_ext" type="text" maxlength="10" value="${d.num_ext || ''}" placeholder="1200 o S/N" required></div>
+        <div class="campo"><label class="campo__etiqueta" for="num_int">Núm. interior <span class="opcional">(opcional)</span></label>
+          <input class="campo__entrada" id="num_int" name="num_int" type="text" maxlength="10" value="${d.num_int || ''}" placeholder="Ej. 3 o B"></div>
+      </div>
+      <input type="hidden" name="lat" value="${d.lat ?? ''}"><input type="hidden" name="lng" value="${d.lng ?? ''}"><input type="hidden" name="place_id" value="${d.place_id || ''}">
+      <span class="campo__ayuda" data-dir-estado>${d.lat ? html`📍 Ubicación verificada · <a href="${mapaUrl(d)}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a>`
+        : d.direccion && !d.calle ? `Dirección registrada: ${d.direccion}. Complétala por partes.` : 'Empieza por el código postal: la alcaldía se llena sola y eliges la colonia de la lista.'}</span>
+    </fieldset>
+    <div class="campo"><label class="campo__etiqueta" for="telefono">Teléfono</label>
+      <input class="campo__entrada" id="telefono" name="telefono" type="tel" inputmode="numeric" maxlength="10" pattern="\\d{10}" value="${d.telefono || ''}" placeholder="10 dígitos" required></div>
+    <div class="campo campo--ancho"><span class="campo__etiqueta">Horario de atención</span>${editorHorario(d.horario)}</div>`;
+
+  /* Ubicación atomizada: mismas reglas que V.ubicacion() en server/util.js */
+  const RE_CALLE = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .,#°\-]+$/;
+  function validarUbicacion(d, cat) {
+    const t = (v) => String(v || '').trim().replace(/\s+/g, ' ');
+    const u = {
+      calle: t(d.calle), num_ext: t(d.num_ext).toUpperCase().replace(/^S\/?N$/, 'S/N'), num_int: t(d.num_int).toUpperCase(),
+      colonia: t(d.colonia), cp: t(d.cp), alcaldia_id: Number(d.alcaldia_id) || null,
+    };
+    if (!/^\d{5}$/.test(u.cp)) fallo(M.cp);
+    if (Number(u.cp.slice(0, 2)) < 1 || Number(u.cp.slice(0, 2)) > 16) fallo(M.cpCdmx);
+    if (!u.alcaldia_id) fallo('Escribe un código postal válido de la Ciudad de México para obtener la alcaldía.');
+    if (!u.colonia) fallo('Selecciona la colonia de la lista del código postal.');
+    if (!V.entre(u.calle, 3, 100) || !RE_CALLE.test(u.calle) || !V.letras(u.calle, 3)) fallo(M.calle);
+    revisarTexto(u.calle, { min: 3, max: 100, campo: 'La calle', lineas: 1 });
+    if (!/^(S\/N|\d{1,5}[A-Z]?(-[A-Z0-9]{1,3})?)$/.test(u.num_ext) || /^0+\D*$/.test(u.num_ext)) fallo(M.numExt);
+    if (u.num_int && !/^[A-Z0-9][A-Z0-9 .\-]{0,9}$/.test(u.num_int)) fallo(M.numInt);
+    return u;
+  }
+
+  function validarCamposRefugio(f, cat, conInstitucion = true) {
+    const d = datosForm(f);
+    if (conInstitucion && !V.entre(d.institucion, 3, 120)) fallo(M.institucion);
+    if (conInstitucion && !V.letras(d.institucion)) fallo(M.letras);
+    if (conInstitucion) revisarNombre(d.institucion, 'refugio');
+    const u = validarUbicacion(d, cat);
+    if (!V.telefono(d.telefono)) fallo(M.telefono);
+    if (!V.telefonoReal(d.telefono)) fallo(M.telefonoReal);
+    return {
+      institucion: d.institucion, ...u, telefono: d.telefono, horario: leerHorario(f),
+      lat: d.lat ? Number(d.lat) : null, lng: d.lng ? Number(d.lng) : null, place_id: d.place_id || null,
+    };
+  }
+
+  /* Enlace a Google Maps (no consume API): por coordenadas o, si no hay, por texto de la dirección */
+  function mapaUrl(r, ruta = false) {
+    const p = new URLSearchParams({ api: '1' });
+    const destino = r.lat && r.lng ? `${r.lat},${r.lng}` : [r.direccion, r.alcaldia, 'Ciudad de México'].filter(Boolean).join(', ');
+    p.set(ruta ? 'destination' : 'query', destino);
+    if (r.place_id) p.set(ruta ? 'destination_place_id' : 'query_place_id', r.place_id);
+    return `https://www.google.com/maps/${ruta ? 'dir' : 'search'}/?${p}`;
+  }
+
+  /* Autocompletado de la dirección con Google Places (vía nuestro servidor). Si no está configurado, el campo es manual. */
+  const nuevaSesion = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
+  async function montarDireccion(raiz) {
+    const caja = $('[data-direccion]', raiz);
+    if (!caja) return;
+    const ayuda = $('[data-dir-estado]', caja);
+    const oculto = (n) => $(`input[name="${n}"]`, caja);
+    const alcaldia = $('input[name="alcaldia_id"]', caja);
+    const campoDe = (n) => $(`[name="${n}"]`, caja);
+    const cat = await catalogos();
+
+    // 1) C.P. → alcaldía (automática) y colonias del catálogo SEPOMEX
+    const cp = campoDe('cp');
+    const verAlc = $('#alcaldia-ver', caja);
+    const selCol = campoDe('colonia');
+    let cpCargado = '';
+    let coloniaDeseada = selCol.dataset.coloniaActual || '';
+    const elegirColonia = (nombre) => {
+      if (!nombre) return;
+      const n = sinAcentos(nombre).replace(/^col(onia)?\.?\s+/, '');
+      const op = [...selCol.options].find((o) => o.value && sinAcentos(o.value) === n)
+        || [...selCol.options].find((o) => o.value && (sinAcentos(o.value).includes(n) || n.includes(sinAcentos(o.value))));
+      if (op) selCol.value = op.value;
+    };
+    const cargarCp = async () => {
+      if (!/^\d{5}$/.test(cp.value)) {
+        cpCargado = ''; alcaldia.value = ''; verAlc.value = '';
+        selCol.innerHTML = '<option value="">Escribe primero el C.P.</option>'; selCol.disabled = true;
+        return;
+      }
+      if (cp.value === cpCargado) return;
+      const valor = cp.value;
+      ayuda.textContent = 'Buscando el código postal…';
+      try {
+        const r = await api(`/lugares/cp/${valor}`);
+        if (cp.value !== valor) return;
+        cpCargado = valor;
+        alcaldia.value = r.alcaldia_id || '';
+        verAlc.value = r.alcaldia;
+        selCol.innerHTML = String(html`<option value="">Selecciona tu colonia (${r.colonias.length})</option>${r.colonias.map((c) => html`<option value="${c.nombre}">${c.nombre}${c.tipo && c.tipo !== 'Colonia' ? ` · ${c.tipo}` : ''}</option>`)}`);
+        selCol.disabled = false;
+        if (r.colonias.length === 1) selCol.value = r.colonias[0].nombre;
+        elegirColonia(coloniaDeseada);
+        coloniaDeseada = '';
+        ayuda.textContent = `C.P. ${valor}: ${r.alcaldia}. Elige la colonia.`;
+      } catch (e) {
+        if (cp.value !== valor) return;
+        cpCargado = ''; alcaldia.value = ''; verAlc.value = '';
+        selCol.innerHTML = '<option value="">C.P. no válido</option>'; selCol.disabled = true;
+        ayuda.textContent = e.status === 404 ? e.message : textoError(e, 'No se pudo consultar el código postal.');
+      }
+    };
+    cp.addEventListener('input', () => { cp.value = cp.value.replace(/\D/g, '').slice(0, 5); cargarCp(); });
+    await cargarCp();
+    // Números en mayúsculas (15-B, S/N) y sin símbolos raros
+    ['num_ext', 'num_int'].forEach((n) => campoDe(n).addEventListener('input', (e) => {
+      e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9 ./\-]/g, '');
+    }));
+    // Si se edita a mano cualquier parte, las coordenadas anteriores ya no corresponden
+    ['calle', 'num_ext', 'num_int', 'colonia', 'cp'].forEach((n) => campoDe(n).addEventListener('input', () => {
+      if (!oculto('lat').value) return;
+      oculto('lat').value = ''; oculto('lng').value = ''; oculto('place_id').value = '';
+    }));
+    selCol.addEventListener('change', () => { if (oculto('lat').value) { oculto('lat').value = ''; oculto('lng').value = ''; oculto('place_id').value = ''; } });
+
+    if (estado.lugares === undefined) {
+      try { estado.lugares = (await api('/lugares/estado', { auto: true })).activo; } catch { estado.lugares = false; }
+    }
+    if (!estado.lugares) return;
+    $('[data-buscador]', caja).hidden = false;
+    montarCalles(caja, cp, selCol);
+    const campo = $('#buscar-dir', caja);
+    const lista = $('.direccion__lista', caja);
+    let sesion = nuevaSesion();
+    let opciones = [];
+    let activa = -1;
+    let reloj;
+    let pedido = 0;
+    const cerrar = () => { lista.hidden = true; campo.setAttribute('aria-expanded', 'false'); campo.removeAttribute('aria-activedescendant'); activa = -1; };
+    const marcar = (i) => {
+      activa = i;
+      $$('[role="option"]', lista).forEach((li, k) => li.setAttribute('aria-selected', String(k === i)));
+      if (i >= 0) campo.setAttribute('aria-activedescendant', `dir-op-${i}`);
+    };
+    const pintar = () => {
+      if (!opciones.length) return cerrar();
+      lista.innerHTML = String(html`${opciones.map((o, i) => html`
+        <li role="option" id="dir-op-${i}" data-i="${i}" aria-selected="false"><strong>${o.principal}</strong><span>${o.secundario}</span></li>`)}
+        <li class="direccion__google" aria-hidden="true">con tecnología de Google</li>`);
+      lista.hidden = false;
+      campo.setAttribute('aria-expanded', 'true');
+    };
+    const elegir = async (o) => {
+      cerrar();
+      ayuda.textContent = 'Verificando dirección…';
+      try {
+        await rellenar(await api('/lugares/detalle', { metodo: 'POST', datos: { id: o.id, sesion } }));
+      } catch (e) {
+        ayuda.textContent = textoError(e, 'No se pudo consultar la dirección. Escríbala manualmente.');
+      }
+      sesion = nuevaSesion(); // cada búsqueda con su detalle es una sesión de cobro de Google
+    };
+    // "Usar mi ubicación actual": coordenadas del navegador → dirección (Google Geocoding) → campos
+    $('[data-mi-ubicacion]', caja).addEventListener('click', async (e) => {
+      const b = e.currentTarget;
+      ocupado(b);
+      ayuda.textContent = 'Obteniendo tu ubicación…';
+      try {
+        const pos = await ubicacionActual();
+        ayuda.textContent = 'Buscando la dirección…';
+        await rellenar(await api('/lugares/inversa', { metodo: 'POST', datos: pos }));
+      } catch (err) {
+        ayuda.textContent = err instanceof ErrorApi ? textoError(err) : err.message;
+      } finally { ocupado(b, false); }
+    });
+    async function rellenar(d) {
+      {
+        campo.value = '';
+        // Cada parte va a su campo; lo que Google no trae queda vacío para completarlo a mano
+        campoDe('calle').value = d.calle || '';
+        campoDe('num_ext').value = d.num_ext || '';
+        cp.value = d.cp || '';
+        coloniaDeseada = d.colonia || '';
+        await cargarCp();
+        elegirColonia(coloniaDeseada);
+        oculto('lat').value = d.lat; oculto('lng').value = d.lng; oculto('place_id').value = d.place_id;
+        const faltan = [['cp', 'código postal'], ['colonia', 'colonia'], ['calle', 'calle'], ['num_ext', 'número exterior']]
+          .filter(([n]) => !campoDe(n).value).map(([, t]) => t);
+        ayuda.innerHTML = String(html`📍 Ubicación verificada${faltan.length ? ` · completa: ${faltan.join(', ')}` : ''} · <a href="${mapaUrl(d)}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a>`);
+        const primero = faltan.length && campoDe({ calle: 'calle', 'número exterior': 'num_ext', colonia: 'colonia', 'código postal': 'cp' }[faltan[0]]);
+        (primero || campoDe('num_int')).focus();
+      }
+    }
+
+    campo.addEventListener('input', () => {
+      clearTimeout(reloj);
+      const texto = campo.value.trim();
+      if (texto.length < 3) { opciones = []; return cerrar(); }
+      reloj = setTimeout(async () => {
+        const n = ++pedido;
+        try {
+          const r = await api('/lugares/sugerencias', { metodo: 'POST', datos: { texto, sesion } });
+          if (n !== pedido) return;
+          opciones = r.sugerencias || [];
+          pintar();
+        } catch { if (n === pedido) { opciones = []; cerrar(); } }
+      }, 300);
+    });
+    campo.addEventListener('keydown', (e) => {
+      if (lista.hidden) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); marcar((activa + 1) % opciones.length); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); marcar((activa - 1 + opciones.length) % opciones.length); }
+      else if (e.key === 'Enter' && activa >= 0) { e.preventDefault(); elegir(opciones[activa]); }
+      else if (e.key === 'Escape') cerrar();
+    });
+    lista.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('[role="option"]');
+      if (!li) return;
+      e.preventDefault(); // conserva el foco en el campo
+      elegir(opciones[Number(li.dataset.i)]);
+    });
+    campo.addEventListener('blur', () => setTimeout(cerrar, 150));
+  }
+
+  /* 3) Calle: sugerencias de Google acotadas al C.P., la colonia y la alcaldía ya elegidos */
+  function montarCalles(caja, cp, selCol) {
+    const campo = $('#calle', caja);
+    const lista = $('#calles-lista', caja);
+    let sesion = nuevaSesion();
+    let opciones = [];
+    let activa = -1;
+    let reloj;
+    let pedido = 0;
+    const cerrar = () => { lista.hidden = true; campo.setAttribute('aria-expanded', 'false'); campo.removeAttribute('aria-activedescendant'); activa = -1; };
+    const marcar = (i) => {
+      activa = i;
+      $$('[role="option"]', lista).forEach((li, k) => li.setAttribute('aria-selected', String(k === i)));
+      if (i >= 0) campo.setAttribute('aria-activedescendant', `calle-op-${i}`);
+    };
+    const elegir = (o) => { campo.value = o.calle; cerrar(); sesion = nuevaSesion(); campo.dispatchEvent(new Event('input')); $('[name="num_ext"]', caja).focus(); };
+    campo.addEventListener('input', (e) => {
+      if (!e.isTrusted) return;
+      clearTimeout(reloj);
+      const texto = campo.value.trim();
+      if (texto.length < 2 || !/^\d{5}$/.test(cp.value) || !selCol.value) { opciones = []; return cerrar(); }
+      reloj = setTimeout(async () => {
+        const n = ++pedido;
+        try {
+          const r = await api('/lugares/calles', { metodo: 'POST', datos: { cp: cp.value, colonia: selCol.value, texto, sesion } });
+          if (n !== pedido) return;
+          opciones = r.calles || [];
+          if (!opciones.length) return cerrar();
+          lista.innerHTML = String(html`${opciones.map((o, i) => html`
+            <li role="option" id="calle-op-${i}" data-i="${i}" aria-selected="false"><strong>${o.calle}</strong><span>${o.zona}</span></li>`)}
+            <li class="direccion__google" aria-hidden="true">con tecnología de Google</li>`);
+          lista.hidden = false;
+          campo.setAttribute('aria-expanded', 'true');
+        } catch { if (n === pedido) { opciones = []; cerrar(); } }
+      }, 300);
+    });
+    campo.addEventListener('keydown', (e) => {
+      if (lista.hidden) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); marcar((activa + 1) % opciones.length); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); marcar((activa - 1 + opciones.length) % opciones.length); }
+      else if (e.key === 'Enter' && activa >= 0) { e.preventDefault(); elegir(opciones[activa]); }
+      else if (e.key === 'Escape') cerrar();
+    });
+    lista.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('[role="option"]');
+      if (!li) return;
+      e.preventDefault();
+      elegir(opciones[Number(li.dataset.i)]);
+    });
+    campo.addEventListener('blur', () => setTimeout(cerrar, 150));
+  }
