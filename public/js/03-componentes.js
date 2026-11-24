@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Dopta · Componentes reutilizables (sección 9)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Componentes reutilizables (sección 9)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 9. Componentes ======================= */
+  /*  9. Componentes  */
   const botonRegresar = (destino, etiqueta = 'Regresar') => html`
     <a class="boton-contorno boton-contorno--icono" href="${destino}" aria-label="${etiqueta}" data-regresar>${ICONO.atras}</a>`;
 

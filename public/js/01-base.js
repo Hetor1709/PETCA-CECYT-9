@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Dopta · Tema, seguridad del cliente, cliente de la API y estado de la aplicación (secciones 1-4)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Tema, seguridad del cliente, cliente de la API y estado de la aplicación (secciones 1-4)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 1. Tema (antes de pintar) ======================= */
+  /*  1. Tema (antes de pintar)  */
   const CLAVE_TEMA = 'dopta-tema';
   const raizDoc = document.documentElement;
   const leerLS = (k) => { try { return window.localStorage.getItem(k); } catch { return null; } };
@@ -17,7 +15,7 @@
     try { window.top.location = window.self.location; } catch { document.documentElement.hidden = true; }
   }
 
-  /* ======================= 2. Seguridad del lado del cliente ======================= */
+  /*  2. Seguridad del lado del cliente  */
   /* Todo texto que viene del usuario o del servidor se convierte a entidades HTML antes de mostrarse */
   const ENTIDADES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;', '=': '&#61;', '/': '&#47;' };
   const esc = (v) => String(v ?? '').replace(/[&<>"'`=/]/g, (c) => ENTIDADES[c]);
@@ -63,7 +61,7 @@
   console.log('%c¡Alto!', 'color:#c9553a;font-size:28px;font-weight:bold');
   console.log('%cNo pegues aquí código que alguien te haya enviado: podría robar tu cuenta de Dopta.', 'font-size:14px');
 
-  /* ======================= 3. Cliente de la API ======================= */
+  /*  3. Cliente de la API  */
   /* Debe coincidir con "version" de package.json: si no, el navegador tiene una copia vieja en caché */
   const VERSION_APP = '2.0.0';
   let versionAvisada = false;
@@ -108,7 +106,7 @@
     return j;
   }
 
-  /* ======================= 4. Estado de la aplicación ======================= */
+  /*  4. Estado de la aplicación  */
   const estado = { usuario: null, panel: '#/', noLeidas: 0, catalogos: null, flash: null, rechazado: null, perfil: null };
 
   async function catalogos(refrescar = false) {

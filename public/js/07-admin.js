@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Dopta · Vistas del Administrador (sección 13)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Vistas del Administrador (sección 13)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 13. Vistas del Administrador ======================= */
+  /*  13. Vistas del Administrador  */
   const SECCIONES_ADMIN = [['#/admin', 'Resumen'], ['#/admin/verificacion', 'Verificación'], ['#/admin/refugios', 'Refugios'], ['#/admin/publicaciones', 'Publicaciones'],
     ['#/admin/reportes', 'Reportes'], ['#/admin/cuentas', 'Cuentas'], ['#/admin/catalogos', 'Catálogos'], ['#/admin/estadisticas', 'Estadísticas']];
   const SECCIONES_FUNC = ['#/admin', '#/admin/reportes', '#/admin/estadisticas'];
@@ -431,7 +429,7 @@
     };
   }
 
-  /* ---------- Gráficas SVG (sin librerías): serie de tiempo, barras horizontales y barra apilada ---------- */
+  /*  Gráficas SVG (sin librerías): serie de tiempo, barras horizontales y barra apilada  */
   const SERIES = [['solicitudes', 'Solicitudes', 'g1'], ['ingresos', 'Ingresos', 'g2'], ['adopciones', 'Adopciones', 'g3']];
   const fmtClave = (k) => (k.length === 7 ? `${MESES_CORTOS[Number(k.slice(5)) - 1]} ${k.slice(2, 4)}` : `${Number(k.slice(8))} ${MESES_CORTOS[Number(k.slice(5, 7)) - 1]}`);
   const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];

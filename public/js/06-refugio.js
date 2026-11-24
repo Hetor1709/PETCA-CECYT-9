@@ -1,17 +1,15 @@
-/* ==========================================================================
-   Dopta · Vistas del Refugio (sección 12)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Vistas del Refugio (sección 12)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 12. Vistas del Refugio ======================= */
+  /*  12. Vistas del Refugio  */
   const subnavRefugio = (actual) => html`
     <nav class="pestanas" aria-label="Secciones del refugio">
       ${[['#/refugio', 'Mis animales'], ['#/refugio/solicitudes', 'Solicitudes'], ['#/refugio/estadisticas', 'Estadísticas'], ['#/refugio/perfil', 'Perfil']]
     .map(([h, t]) => html`<a class="pestana" href="${h}"${si(h === actual, 'aria-current="page"')}>${t}</a>`)}
     </nav>`;
 
-  /* ---------- Mis animales (RF-13, RF-14, RF-15, RF-23) ---------- */
+  /*  Mis animales (RF-13, RF-14, RF-15, RF-23)  */
   /* Ficha de la mascota con todas sus solicitudes de adopción (vista del refugio) */
   async function verMascota(animalId) {
     let a; let sols; let cat;
@@ -148,7 +146,7 @@
     };
   }
 
-  /* ---------- RF-12 / RF-13: publicar o editar un animal ---------- */
+  /*  RF-12 / RF-13: publicar o editar un animal  */
   const filaRequisito = (cat, r = {}) => html`
     <div class="repetible__fila">
       <input class="campo__entrada" name="req_nombre" type="text" maxlength="100" placeholder="Ej. Copia de INE" value="${r.nombre || ''}" aria-label="Nombre del requisito">
@@ -424,7 +422,7 @@
     };
   }
 
-  /* ---------- RF-18 a RF-22: solicitudes recibidas ---------- */
+  /*  RF-18 a RF-22: solicitudes recibidas  */
   async function perfilRefugio(refrescar) {
     if (!estado.perfil || refrescar) estado.perfil = await api('/refugio/perfil');
     return estado.perfil;
@@ -473,7 +471,7 @@
     });
   }
 
-  /* ---------- Protocolo: visita domiciliaria, entrega y seguimiento ---------- */
+  /*  Protocolo: visita domiciliaria, entrega y seguimiento  */
   function registrarVisita(s) {
     return dialogo({
       titulo: `Visita domiciliaria · ${s.adoptante}`,
@@ -673,7 +671,7 @@
     };
   }
 
-  /* ---------- RF-11: perfil del Refugio ---------- */
+  /*  RF-11: perfil del Refugio  */
   const ETQ_CAMBIO = { nombre: 'nombre', institucion: 'institución', telefono: 'teléfono', horario: 'horario' };
   const camposCambio = (datos) => [...new Set(Object.keys(datos || {}).map((k) => ETQ_CAMBIO[k] || 'dirección'))].join(', ');
   async function vistaRefugioPerfil() {
@@ -721,7 +719,7 @@
     };
   }
 
-  /* ---------- RF-35: estadísticas propias ---------- */
+  /*  RF-35: estadísticas propias  */
   function vistaRefugioEstadisticas() {
     return {
       html: html`

@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Dopta · Acceso y cuenta: registro, login, solicitudes del adoptante, notificaciones (sección 11)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Acceso y cuenta: registro, login, solicitudes del adoptante, notificaciones (sección 11)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 11. Acceso y cuenta ======================= */
+  /*  11. Acceso y cuenta  */
   const tarjetaCuenta = (id, titulo, subtitulo, contenido, ancho = false) => html`
     <section class="cuenta">
       ${botonRegresar('#/')}
@@ -21,7 +19,7 @@
     return f ? html`<p class="mensaje ${f.tipo === 'error' ? 'mensaje--error' : ''}" role="status">${f.texto}</p>` : '';
   };
 
-  /* ---------- RF-05: iniciar sesión ---------- */
+  /*  RF-05: iniciar sesión  */
   function vistaLogin(ctx) {
     return {
       html: tarjetaCuenta('titulo-login', 'Iniciar Sesión', 'Ingresa a tu cuenta para adoptar o publicar mascotas', html`
@@ -355,7 +353,7 @@
   /* Solo dígitos en los campos de teléfono */
   const soloDigitos = (raiz) => $$('input[type="tel"]', raiz).forEach((t) => t.addEventListener('input', () => { t.value = t.value.replace(/\D/g, '').slice(0, 10); }));
 
-  /* ---------- RF-01 a RF-04: registro ---------- */
+  /*  RF-01 a RF-04: registro  */
   async function vistaRegistro() {
     const cat = await catalogos();
     return {
@@ -450,7 +448,7 @@
     };
   }
 
-  /* ---------- RF-25: verificación rechazada, el refugio reenvía todos sus datos ---------- */
+  /*  RF-25: verificación rechazada, el refugio reenvía todos sus datos  */
   async function vistaRechazada() {
     const cat = await catalogos();
     return {
@@ -493,7 +491,7 @@
     };
   }
 
-  /* ---------- RF-08: recuperar contraseña ---------- */
+  /*  RF-08: recuperar contraseña  */
   function vistaRecuperar() {
     return {
       html: tarjetaCuenta('titulo-recuperar', 'Recuperar contraseña', 'Te enviaremos un enlace de un solo uso, válido por 30 minutos.', html`
@@ -563,7 +561,7 @@
     };
   }
 
-  /* ---------- RF-07, RF-09, RF-10: mi cuenta ---------- */
+  /*  RF-07, RF-09, RF-10: mi cuenta  */
   /* Silueta del usuario con sus iniciales y color propio (cambia según el tipo de cuenta) */
   function siluetaUsuario(nombre, tipo, grande = false) {
     const ini = String(nombre || '?').trim().split(/\s+/).filter((p) => /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(p)).slice(0, 2).map((p) => p[0].toUpperCase()).join('') || '?';
@@ -783,7 +781,7 @@
     };
   }
 
-  /* ---------- RF-24: notificaciones ---------- */
+  /*  RF-24: notificaciones  */
   async function vistaNotificaciones() {
     let lista;
     try { lista = await api('/notificaciones'); } catch (e) { lista = null; }
@@ -824,7 +822,7 @@
     };
   }
 
-  /* ---------- RF-17: mis solicitudes ---------- */
+  /*  RF-17: mis solicitudes  */
   /* Lo que la persona adoptante envió (formato de adopción): visible para ambos lados */
   const resumenEnviado = (s, titulo = 'Lo que enviaste al refugio', abierto = false) => (s.resumen ? html`
     <details class="enviado"${si(abierto, 'open')}><summary>${titulo}</summary>
@@ -904,7 +902,7 @@
         ['Teléfono', s.adoptante_telefono ? html`<a class="enlace" href="tel:${s.adoptante_telefono}">${s.adoptante_telefono}</a>` : 'Sin teléfono'],
         ['Mascota', s.animal],
       ];
-    return html`<table class="tabla-cita"><caption>📅 Cita de adopción</caption>
+    return html`<table class="tabla-cita"><caption> Cita de adopción</caption>
       <tbody>${filas.map(([k, v]) => html`<tr><th scope="row">${k}</th><td>${v}</td></tr>`)}</tbody></table>`;
   }
 
@@ -935,12 +933,12 @@
                 </div>
                 ${lineaProceso(cerrada ? 0 : pasoActual(s) - 1, cerrada)}
                 ${cerrada && s.motivo_rechazo ? html`<p class="fila__detalle">Motivo: ${s.motivo_rechazo}</p>` : ''}
-                ${sinRespuesta ? html`<p class="fila__detalle">⏳ El refugio aún no responde. Abajo puedes ver lo que le enviaste.</p>` : ''}
-                ${s.concretada_en ? html`<p class="fila__detalle">🎉 Adopción concretada el ${s.concretada_en}.${s.entrega && s.entrega.ruac ? ` Folio RUAC: ${s.entrega.ruac}.` : ' Recuerda registrarlo en el RUAC.'}${s.entrega && s.entrega.esterilizar_antes ? ` Esterilización comprometida antes del ${s.entrega.esterilizar_antes}.` : ''}</p>
+                ${sinRespuesta ? html`<p class="fila__detalle">El refugio aún no responde. Abajo puedes ver lo que le enviaste.</p>` : ''}
+                ${s.concretada_en ? html`<p class="fila__detalle"> Adopción concretada el ${s.concretada_en}.${s.entrega && s.entrega.ruac ? ` Folio RUAC: ${s.entrega.ruac}.` : ' Recuerda registrarlo en el RUAC.'}${s.entrega && s.entrega.esterilizar_antes ? ` Esterilización comprometida antes del ${s.entrega.esterilizar_antes}.` : ''}</p>
                   ${s.seguimientos.length ? html`<ul class="seguimiento">${s.seguimientos.map((x) => html`<li class="${x.realizado_en ? 'hecho' : ''}"><span>${ETAPAS[x.etapa]}</span><span>${x.realizado_en ? `✓ ${RESULTADOS[x.resultado]}` : `El refugio te contactará el ${x.programado}`}</span></li>`)}</ul>` : ''}`
     : s.cita_fecha ? tablaCita(s, 'adoptante')
-      : s.estado === 'aprobada' ? html`<p class="fila__detalle">✅ El refugio aprobó tu solicitud y agendará tu cita pronto.</p>` : ''}
-                ${s.visita && !s.concretada_en ? html`<p class="fila__detalle">🏠 Visita domiciliaria: ${s.visita === 'realizada' ? `realizada el ${s.visita_en}` : 'no fue necesaria'}.</p>` : ''}
+      : s.estado === 'aprobada' ? html`<p class="fila__detalle"> El refugio aprobó tu solicitud y agendará tu cita pronto.</p>` : ''}
+                ${s.visita && !s.concretada_en ? html`<p class="fila__detalle"> Visita domiciliaria: ${s.visita === 'realizada' ? `realizada el ${s.visita_en}` : 'no fue necesaria'}.</p>` : ''}
                 ${resumenEnviado(s, 'Lo que enviaste al refugio', sinRespuesta && s.id === foco)}
                 ${conversacion(s, s.id === foco)}
                 <p class="acciones acciones--compactas">

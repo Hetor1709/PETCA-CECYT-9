@@ -1,6 +1,4 @@
-/* ==========================================================================
-   Dopta · Hoja de estilos única (base, páginas y componentes)
-   ========================================================================== */
+/* Dopta · Hoja de estilos única (base, páginas y componentes)  */
 
 /* ---------- Tokens ---------- */
 :root {
@@ -29,7 +27,7 @@
   --font-texto: "Amaranth", "Segoe UI", Arial, sans-serif;
 }
 
-/* ---------- Modo oscuro ----------
+/*  Modo oscuro 
    Se activa con data-theme="oscuro" en <html> (lo controla js/tema.js) */
 html[data-theme="oscuro"] {
   --color-fondo: #111313;
@@ -93,7 +91,7 @@ html[data-theme="oscuro"] .boton-tema__sol {
   display: block;
 }
 
-/* ---------- Base ---------- */
+/*  Base  */
 *,
 *::before,
 *::after {
@@ -148,7 +146,7 @@ a {
   border: 0;
 }
 
-/* ---------- Encabezado ---------- */
+/*  Encabezado  */
 .encabezado {
   background: var(--color-encabezado);
 }
@@ -282,7 +280,7 @@ a {
   gap: 8px;
 }
 
-/* ---------- Botón único ----------
+/*  Botón único
    Pastilla durazno con relleno blanco ondulado que sube al pasar el cursor. */
 .boton-pastilla {
   position: relative;
@@ -367,7 +365,7 @@ a {
   flex-shrink: 0;
 }
 
-/* ---------- Principal ---------- */
+/*  Principal  */
 .principal {
   flex: 1;
   width: 100%;
@@ -387,7 +385,7 @@ a {
   color: var(--color-azul-fuerte);
 }
 
-/* ---------- Buscador ---------- */
+/*  Buscador  */
 .buscador {
   position: relative;
   margin: 0 auto 24px;
@@ -516,7 +514,7 @@ a {
   display: none;
 }
 
-/* ---------- Catálogo ---------- */
+/*  Catálogo  */
 /* Columnas fluidas: caben tantas tarjetas de al menos 173px como quepan en el ancho,
    así el catálogo se reacomoda sin cortes al cambiar el tamaño de la ventana */
 .catalogo {
@@ -734,7 +732,7 @@ a {
   opacity: 0.85;
 }
 
-/* ---------- Banner del test ---------- */
+/*  Banner del test  */
 .test {
   margin-top: 40px;
   padding: 24px 24px;
@@ -778,7 +776,7 @@ a {
   margin: 0;
 }
 
-/* ---------- Ajustes para pantallas pequeñas ---------- */
+/*  Ajustes para pantallas pequeñas  */
 @media (max-width: 479px) {
   .encabezado__contenedor {
     flex-wrap: wrap;
@@ -796,7 +794,7 @@ a {
   }
 }
 
-/* ---------- Pantalla de carga entre páginas ---------- */
+/*  Pantalla de carga entre páginas  */
 .cargando {
   position: fixed;
   inset: 0;
@@ -829,7 +827,7 @@ a {
   }
 }
 
-/* ---------- Páginas de error ---------- */
+/*  Páginas de error  */
 .error {
   flex: 1;
   display: grid;
@@ -869,7 +867,7 @@ a {
 }
 
 
-/* ---------- Página de cuenta (login y registro) ---------- */
+/*  Página de cuenta (login y registro)  */
 .cuenta {
   flex: 1;
   width: 100%;
@@ -994,7 +992,7 @@ a {
   text-decoration: underline;
 }
 
-/* ---------- Sobre nosotros ---------- */
+/*  Sobre nosotros  */
 .nosotros {
   flex: 1;
   width: 100%;

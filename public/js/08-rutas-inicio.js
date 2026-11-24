@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Dopta · Rutas y navegación, sesión e inactividad, efectos visuales e inicio (secciones 14-17)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Rutas y navegación, sesión e inactividad, efectos visuales e inicio (secciones 14-17)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 14. Rutas y navegación ======================= */
+  /*  14. Rutas y navegación  */
   const RUTAS = [];
   const ruta = (patron, vista, acceso = null, titulo = '') => RUTAS.push({
     re: new RegExp(`^${patron.replace(/:(\w+)/g, '(?<$1>\\d{1,10})')}$`), vista, acceso, titulo,

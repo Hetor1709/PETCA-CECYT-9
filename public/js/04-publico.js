@@ -1,12 +1,10 @@
-/* ==========================================================================
-   Dopta · Vistas públicas: catálogo, fichas, refugios, cuestionario (sección 10)
-   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global.
-   ========================================================================== */
+/* Dopta · Vistas públicas: catálogo, fichas, refugios, cuestionario (sección 10)
+   Los archivos de public/js/ se cargan como scripts clásicos, en orden (ver index.html), y comparten el mismo ámbito global. */
 'use strict';
 
-  /* ======================= 10. Vistas públicas ======================= */
+  /*  10. Vistas públicas  */
 
-  /* ---------- Catálogo (RNF-01) ---------- */
+  /*  Catálogo (RNF-01)  */
   const FILTROS = ['edad', 'alcaldia', 'energia', 'orden', 'esterilizado', 'vacunado', 'perros', 'desconocidos', 'sin_tratamiento'];
   async function vistaCatalogo(ctx) {
     const cat = await catalogos().catch(() => ({ tamano: [] }));
@@ -133,7 +131,7 @@
     };
   }
 
-  /* ---------- Ficha de detalle del animal ---------- */
+  /*  Ficha de detalle del animal  */
   async function vistaAnimal(ctx) {
     const id = idValido(ctx.params.id);
     if (!id) return vista404();
@@ -208,7 +206,7 @@
     };
   }
 
-  /* ---------- Reportes: adoptantes reportan fichas y refugios; refugios reportan adoptantes ---------- */
+  /*  Reportes: adoptantes reportan fichas y refugios; refugios reportan adoptantes  */
   let motivosReporte = null;
   async function reportar(tipo, id, nombre = '') {
     motivosReporte = motivosReporte || await api('/reportes/motivos');
@@ -233,7 +231,7 @@
     if (ok) aviso('Reporte enviado. El equipo de Dopta lo revisará.');
   }
 
-  /* ---------- Protocolo de adopción ---------- */
+  /*  Protocolo de adopción  */
   const PASOS = [
     ['Formato', 'Llenas el formato de adopción y aceptas la carta compromiso.'],
     ['Revisión', 'El refugio revisa tu solicitud y puede escribirte.'],
@@ -365,7 +363,7 @@
     };
   }
 
-  /* ---------- Cuestionario de compatibilidad ---------- */
+  /*  Cuestionario de compatibilidad  */
   function recomendar(r) {
     let tamano;
     if (r.jardin === 'no') tamano = r.tiempo === 'mucho' && r.energia === 'activos' ? 'Mediano' : 'Pequeño';
@@ -448,7 +446,7 @@
     };
   }
 
-  /* ---------- Refugios: listado público ---------- */
+  /*  Refugios: listado público  */
   async function vistaRefugios(ctx) {
     const q = (ctx.query.get('q') || '').slice(0, 60);
     return {
@@ -503,7 +501,7 @@
     };
   }
 
-  /* ---------- Perfil público del refugio ---------- */
+  /*  Perfil público del refugio  */
   async function vistaPerfilRefugio(ctx) {
     const id = idValido(ctx.params.id);
     if (!id) return vista404();
@@ -561,7 +559,7 @@
     };
   }
 
-  /* ---------- Sobre nosotros ---------- */
+  /*  Sobre nosotros  */
   const vistaNosotros = () => html`
     <div class="nosotros">
       <section class="nosotros__seccion nosotros__heroe">
@@ -617,7 +615,7 @@
       </section>
     </div>`;
 
-  /* ---------- Errores ---------- */
+  /*  Errores  */
   const vista404 = () => html`
     <section class="error">
       <img src="img/error-404.svg" alt="" width="150" height="157">
