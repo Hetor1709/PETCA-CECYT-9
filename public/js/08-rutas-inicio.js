@@ -177,7 +177,7 @@
     if (b) b.addEventListener('click', cerrarSesion);
   }
 
-  /* ======================= 15. Sesión e inactividad (RF-06) ======================= */
+  /*  15. Sesión e inactividad (RF-06)  */
   async function actualizarYo(auto = false) {
     try {
       const r = await api('/auth/yo', { auto });
@@ -234,7 +234,7 @@
     setInterval(() => { if (estado.usuario && !document.hidden) actualizarYo(true); }, 60000);
   }
 
-  /* ======================= 16. Efectos visuales ======================= */
+  /*  16. Efectos visuales  */
   function actualizarBotonTema() {
     const boton = $('[data-tema-boton]');
     if (!boton) return;
@@ -312,7 +312,7 @@
     }, { passive: true });
   }
 
-  /* ======================= 17. Inicio ======================= */
+  /*  17. Inicio  */
   /* Aviso de cookies: informativo (la única cookie es la de sesión, necesaria). Se recuerda en el navegador al pulsar "Entendido". */
   function montarCookies() {
     const caja = $('#cookies');

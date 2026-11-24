@@ -168,7 +168,7 @@
                 ${insignia(a.estado, ETQ[a.estado])}
                 <span class="insignia">${a.edad}</span>
                 <span class="insignia">${a.tamano}</span>
-                ${a.peso_kg ? html`<span class="insignia">⚖️ ${Number(a.peso_kg)} kg</span>` : ''}
+                ${a.peso_kg ? html`<span class="insignia"> ${Number(a.peso_kg)} kg</span>` : ''}
                 ${a.altura_cm ? html`<span class="insignia">📏 ${a.altura_cm} cm</span>` : ''}
                 <span class="insignia">${Number(a.esterilizado) ? `Esterilizado · ${a.fecha_esterilizacion}` : 'Sin esterilizar'}</span>
                 <span class="insignia">Ingreso · ${a.fecha_ingreso}</span>
@@ -191,7 +191,7 @@
                 <p>${a.institucion}</p>
                 <p>${a.direccion}${a.alcaldia ? `, ${a.alcaldia}` : ''}</p>
                 <p>Tel. ${a.telefono}</p>
-                <p class="acciones"><a class="boton-contorno boton-contorno--chico" href="${mapaUrl(a, true)}" target="_blank" rel="noopener noreferrer">📍 Cómo llegar</a>
+                <p class="acciones"><a class="boton-contorno boton-contorno--chico" href="${mapaUrl(a, true)}" target="_blank" rel="noopener noreferrer"> Cómo llegar</a>
                   <a class="boton-contorno boton-contorno--chico" href="#/refugios/${a.refugio_id}">Ver refugio</a></p>
                 <ul class="horario-lista">${a.horario.map((h) => html`<li><span>${DIAS[h.dia]}</span><span>${Number(h.cerrado) ? 'Cerrado' : `${h.abre}–${h.cierra}`}</span></li>`)}</ul>
               </div>
@@ -530,8 +530,8 @@
               <div class="ficha__bloque">
                 <h2>Ubicación</h2>
                 <p>${r.direccion}${r.alcaldia ? `, ${r.alcaldia}` : ''}</p>
-                <p class="acciones"><a class="boton-contorno boton-contorno--chico" href="${mapaUrl(r, true)}" target="_blank" rel="noopener noreferrer">📍 Cómo llegar</a>
-                  <a class="boton-contorno boton-contorno--chico" href="tel:${r.telefono}">📞 ${r.telefono}</a></p>
+                <p class="acciones"><a class="boton-contorno boton-contorno--chico" href="${mapaUrl(r, true)}" target="_blank" rel="noopener noreferrer"> Cómo llegar</a>
+                  <a class="boton-contorno boton-contorno--chico" href="tel:${r.telefono}"> ${r.telefono}</a></p>
               </div>
               <div class="ficha__bloque">
                 <h2>Horario de atención</h2>
