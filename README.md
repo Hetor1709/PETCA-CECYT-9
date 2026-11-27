@@ -2,6 +2,12 @@
 
 Aplicación web: servidor Node.js (Express) + base de datos **MySQL**. Por defecto corre con MySQL local; también funciona con **Aiven for MySQL** (ver más abajo).
 
+# Nombre de los integrantes
+-Fonseca Cardenas Yerik
+-Romero Velazquez Hecor Hugo
+-Sandoval Solis Leonel
+-Samano Trejo Gustavo
+
 ## Requisitos
 
 - [Node.js](https://nodejs.org) 18 o más reciente (LTS recomendado).
